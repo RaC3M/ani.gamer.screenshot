@@ -64,7 +64,6 @@ async function handlePageShortcut(event) {
   }
 
   event.preventDefault();
-  showToast('截圖中...', 'success');
 
   try {
     const result = await chrome.runtime.sendMessage({
