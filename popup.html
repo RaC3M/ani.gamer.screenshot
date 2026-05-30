@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>動畫瘋截圖小工具</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main class="popup">
+      <header class="header">
+        <div>
+          <h1>動畫瘋截圖小工具</h1>
+          <p id="statusText" class="status">尚未截圖</p>
+        </div>
+        <button id="settingsButton" class="icon-button" type="button" title="設定" aria-label="開啟設定">
+          &#9881;
+        </button>
+      </header>
+
+      <button id="captureButton" class="primary-button" type="button">
+        立即截圖
+      </button>
+
+      <section class="settings" aria-label="截圖設定">
+        <label class="setting-row">
+          <span>
+            <strong>自動下載</strong>
+            <small>截圖後儲存 PNG</small>
+          </span>
+          <input id="autoDownload" type="checkbox">
+        </label>
+
+        <label class="setting-row">
+          <span>
+            <strong>複製到剪貼簿</strong>
+            <small>可貼到支援圖片的應用程式</small>
+          </span>
+          <input id="copyToClipboard" type="checkbox">
+        </label>
+      </section>
+
+      <section id="settingsPanel" class="settings-panel" aria-label="進階設定" hidden>
+        <div class="settings-panel-header">
+          <h2>設定</h2>
+          <button id="closeSettingsButton" class="close-button" type="button" aria-label="關閉設定">
+            &times;
+          </button>
+        </div>
+
+        <label class="field">
+          <span>下載子資料夾</span>
+          <small>會建立在 Chrome 預設 Downloads 資料夾底下，留空則直接存到 Downloads。</small>
+          <div class="button-row">
+            <input id="downloadSubfolder" type="text" placeholder="AnimeScreenshots" autocomplete="off" spellcheck="false">
+            <button id="clearFolderButton" class="ghost-button" type="button">
+              清除
+            </button>
+          </div>
+        </label>
+
+        <label class="field">
+          <span>輸出解析度</span>
+          <small>依高度縮小截圖，不會放大超過原始畫面。</small>
+          <select id="outputResolution">
+            <option value="original">原始解析度</option>
+            <option value="720p">720P</option>
+            <option value="1080p">1080P</option>
+            <option value="1440p">1440P</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>頁面快捷鍵</span>
+          <small>按下錄製後，直接按新的鍵盤組合。</small>
+          <button id="recordShortcutButton" class="shortcut-recorder" type="button">
+            <span class="shortcut-label">錄製快捷鍵</span>
+            <span id="shortcutDisplay">Shift+C</span>
+          </button>
+        </label>
+
+        <p id="settingsMessage" class="settings-message" aria-live="polite"></p>
+      </section>
+
+      <div id="popupNotice" class="popup-notice" role="status" aria-live="polite" hidden></div>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
