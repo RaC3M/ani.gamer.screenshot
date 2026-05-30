@@ -247,17 +247,3 @@ Downloads\AnimeScreenshots
 ### 可以下載影片嗎？
 
 不行。這個工具只做手動截圖，不提供影片下載、錄影或批量擷取功能。
-
-## 上架 Chrome Web Store
-
-如果你想讓其他人可以在 Chrome Web Store 搜尋並一鍵安裝，需要自行上架。
-
-基本流程：
-
-1. 註冊 Chrome Web Store 開發者帳號。
-2. 到 Chrome Developer Dashboard。
-3. 點 `Add new item`。
-4. 上傳 `anime-screenshot-extension-1.0.0.zip`。
-5. 填寫商店頁面資訊、隱私權與權限說明。
-6. 送出審核。
-7. 審核通過後，其他人就能搜尋或透過商店連結安裝。
