@@ -2,6 +2,7 @@ const DEFAULT_SETTINGS = {
   autoDownload: true,
   copyToClipboard: false,
   downloadSubfolder: 'AnimeScreenshots',
+  organizeByAnimeName: true,
   pageShortcut: 'Shift+C',
   outputResolution: 'original'
 };
@@ -14,6 +15,7 @@ const settingsPanel = document.getElementById('settingsPanel');
 const closeSettingsButton = document.getElementById('closeSettingsButton');
 const downloadSubfolderInput = document.getElementById('downloadSubfolder');
 const clearFolderButton = document.getElementById('clearFolderButton');
+const organizeByAnimeNameInput = document.getElementById('organizeByAnimeName');
 const recordShortcutButton = document.getElementById('recordShortcutButton');
 const shortcutDisplay = document.getElementById('shortcutDisplay');
 const outputResolutionInput = document.getElementById('outputResolution');
@@ -34,6 +36,7 @@ async function initPopup() {
   autoDownloadInput.checked = settings.autoDownload;
   copyToClipboardInput.checked = settings.copyToClipboard;
   downloadSubfolderInput.value = normalizeDownloadSubfolder(settings.downloadSubfolder);
+  organizeByAnimeNameInput.checked = settings.organizeByAnimeName;
   currentShortcut = settings.pageShortcut;
   shortcutDisplay.textContent = currentShortcut;
   outputResolutionInput.value = normalizeStoredResolution(settings.outputResolution);
@@ -47,6 +50,7 @@ async function initPopup() {
   downloadSubfolderInput.addEventListener('change', saveDownloadSubfolder);
   downloadSubfolderInput.addEventListener('blur', saveDownloadSubfolder);
   clearFolderButton.addEventListener('click', clearDownloadSubfolder);
+  organizeByAnimeNameInput.addEventListener('change', saveOrganizeSetting);
   recordShortcutButton.addEventListener('click', startShortcutRecording);
   outputResolutionInput.addEventListener('change', saveResolution);
 }
@@ -82,6 +86,18 @@ async function saveDownloadSubfolder() {
 async function clearDownloadSubfolder() {
   downloadSubfolderInput.value = '';
   await saveDownloadSubfolder();
+}
+
+async function saveOrganizeSetting() {
+  await chrome.storage.sync.set({
+    organizeByAnimeName: organizeByAnimeNameInput.checked
+  });
+
+  showSettingsMessage(
+    organizeByAnimeNameInput.checked
+      ? '會依動畫名稱建立資料夾'
+      : '已關閉動畫名稱資料夾'
+  );
 }
 
 function startShortcutRecording() {
@@ -188,10 +204,16 @@ function buildFinalStatus(result) {
   }
 
   if (result.filename?.includes('/')) {
-    return `${result.statusText}，已存到 ${result.filename.split('/')[0]}`;
+    return `${result.statusText}，已存到 ${getDownloadFolderLabel(result.filename)}`;
   }
 
   return result.statusText;
+}
+
+function getDownloadFolderLabel(filename) {
+  const parts = filename.split('/').filter(Boolean);
+  parts.pop();
+  return parts.join('\\') || 'Downloads';
 }
 
 function showPopupNotice(text, tone = 'success') {

@@ -3,6 +3,7 @@ const DEFAULT_SETTINGS = {
   autoDownload: true,
   copyToClipboard: false,
   downloadSubfolder: 'AnimeScreenshots',
+  organizeByAnimeName: true,
   pageShortcut: 'Shift+C',
   outputResolution: 'original'
 };
@@ -70,7 +71,7 @@ async function captureActiveTab(sourceTab, options = {}) {
       throw new FriendlyError('截圖失敗，可能受到網站限制');
     }
 
-    const filename = buildFilename(playerInfo.title, settings.downloadSubfolder);
+    const filename = buildFilename(playerInfo.title, settings);
     const actions = await runOutputActions(processed.dataUrl, filename, settings, {
       skipDownload: options.returnDataUrl
     });
@@ -386,12 +387,24 @@ async function ensureOffscreenDocument() {
   });
 }
 
-function buildFilename(title, downloadSubfolder) {
-  const baseName = sanitizeFilename(title) || 'AnimeScreenshot';
+function buildFilename(title, settings) {
+  const animeName = sanitizeFilename(title);
+  const baseName = animeName || 'AnimeScreenshot';
   const filename = `${baseName}_${formatTimestamp(new Date())}.png`;
-  const folder = sanitizeDownloadSubfolder(downloadSubfolder);
+  const folder = sanitizeDownloadSubfolder(settings.downloadSubfolder);
+  const pathParts = [];
 
-  return folder ? `${folder}/${filename}` : filename;
+  if (folder) {
+    pathParts.push(folder);
+  }
+
+  if (settings.organizeByAnimeName && animeName) {
+    pathParts.push(animeName);
+  }
+
+  pathParts.push(filename);
+
+  return pathParts.join('/');
 }
 
 function sanitizeFilename(value) {

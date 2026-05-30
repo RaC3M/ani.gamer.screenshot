@@ -24,6 +24,7 @@
 - 可自動下載截圖。
 - 可複製截圖到剪貼簿。
 - 可設定下載子資料夾，例如 `Downloads\AnimeScreenshots`。
+- 可依動畫名稱自動建立資料夾。
 - 可選輸出解析度：原始解析度、`720P`、`1080P`、`1440P`。
 - 截圖成功或失敗時，會在頁面右上角與 Popup 顯示提示。
 
@@ -121,6 +122,34 @@ Downloads\AnimeScreenshots
 
 如果留空，就會直接存到 Chrome 目前設定的下載資料夾。
 
+### 依動畫名稱建立資料夾
+
+開啟後，工具會在下載子資料夾底下再建立動畫名稱資料夾。
+
+例如下載子資料夾是：
+
+```text
+AnimeScreenshots
+```
+
+動畫名稱是：
+
+```text
+某部動畫
+```
+
+圖片會存到：
+
+```text
+Downloads\AnimeScreenshots\某部動畫
+```
+
+如果下載子資料夾留空，則會存到：
+
+```text
+Downloads\某部動畫
+```
+
 ### 輸出解析度
 
 可以選：
@@ -208,6 +237,8 @@ anime-screenshot-extension/
 ```text
 Downloads\AnimeScreenshots
 ```
+
+如果有開啟「依動畫名稱建立資料夾」，會再往下一層建立動畫名稱資料夾。
 
 ### 可以直接指定桌面或 D 槽嗎？
 
