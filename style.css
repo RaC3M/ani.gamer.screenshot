@@ -257,6 +257,13 @@ h2 {
   background: #ecfdf5;
 }
 
+.secondary-button:disabled {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+  color: #64748b;
+  cursor: wait;
+}
+
 .settings-message {
   min-height: 18px;
   margin: 8px 0 0;
@@ -331,4 +338,57 @@ h2 {
   border-color: #0f766e;
   background: #ecfdf5;
   color: #0f766e;
+}
+
+.gif-panel {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 12px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.panel-title strong,
+.panel-title small {
+  display: block;
+}
+
+.panel-title strong {
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.panel-title small {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.range-row {
+  display: grid;
+  grid-template-columns: 1fr 48px;
+  align-items: center;
+  gap: 10px;
+}
+
+.range-row input {
+  padding: 0;
+}
+
+.range-row output {
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.progress-text {
+  min-height: 18px;
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.5;
 }

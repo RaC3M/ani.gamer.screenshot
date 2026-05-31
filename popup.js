@@ -4,7 +4,9 @@ const DEFAULT_SETTINGS = {
   downloadSubfolder: 'AnimeScreenshots',
   organizeByAnimeName: true,
   pageShortcut: 'Shift+C',
-  outputResolution: 'original'
+  outputResolution: 'original',
+  gifDurationSeconds: 5,
+  gifResolution: '720p'
 };
 
 const captureButton = document.getElementById('captureButton');
@@ -19,13 +21,20 @@ const organizeByAnimeNameInput = document.getElementById('organizeByAnimeName');
 const recordShortcutButton = document.getElementById('recordShortcutButton');
 const shortcutDisplay = document.getElementById('shortcutDisplay');
 const outputResolutionInput = document.getElementById('outputResolution');
+const gifDurationInput = document.getElementById('gifDuration');
+const gifDurationValue = document.getElementById('gifDurationValue');
+const gifResolutionInput = document.getElementById('gifResolution');
+const createGifButton = document.getElementById('createGifButton');
+const gifProgress = document.getElementById('gifProgress');
 const settingsMessage = document.getElementById('settingsMessage');
 const statusText = document.getElementById('statusText');
 const popupNotice = document.getElementById('popupNotice');
 let currentShortcut = DEFAULT_SETTINGS.pageShortcut;
 let isRecordingShortcut = false;
+let activeGifProgressId = '';
 
 initPopup();
+chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 
 async function initPopup() {
   const settings = await chrome.storage.sync.get(DEFAULT_SETTINGS);
@@ -40,6 +49,9 @@ async function initPopup() {
   currentShortcut = settings.pageShortcut;
   shortcutDisplay.textContent = currentShortcut;
   outputResolutionInput.value = normalizeStoredResolution(settings.outputResolution);
+  gifDurationInput.value = normalizeGifDuration(settings.gifDurationSeconds);
+  gifDurationValue.textContent = `${gifDurationInput.value} 秒`;
+  gifResolutionInput.value = normalizeGifResolution(settings.gifResolution);
   statusText.textContent = status.lastStatusText;
 
   autoDownloadInput.addEventListener('change', saveQuickSettings);
@@ -53,6 +65,10 @@ async function initPopup() {
   organizeByAnimeNameInput.addEventListener('change', saveOrganizeSetting);
   recordShortcutButton.addEventListener('click', startShortcutRecording);
   outputResolutionInput.addEventListener('change', saveResolution);
+  gifDurationInput.addEventListener('input', updateGifDurationLabel);
+  gifDurationInput.addEventListener('change', saveGifSettings);
+  gifResolutionInput.addEventListener('change', saveGifSettings);
+  createGifButton.addEventListener('click', createGif);
 }
 
 async function saveQuickSettings() {
@@ -156,6 +172,87 @@ async function saveResolution() {
     outputResolution: outputResolutionInput.value
   });
   showSettingsMessage('解析度已儲存');
+}
+
+function updateGifDurationLabel() {
+  gifDurationValue.textContent = `${normalizeGifDuration(gifDurationInput.value)} 秒`;
+}
+
+async function saveGifSettings() {
+  const gifDurationSeconds = normalizeGifDuration(gifDurationInput.value);
+  const gifResolution = normalizeGifResolution(gifResolutionInput.value);
+
+  gifDurationInput.value = gifDurationSeconds;
+  gifDurationValue.textContent = `${gifDurationSeconds} 秒`;
+  gifResolutionInput.value = gifResolution;
+
+  await chrome.storage.sync.set({
+    gifDurationSeconds,
+    gifResolution
+  });
+  showSettingsMessage('GIF 設定已儲存');
+}
+
+async function createGif() {
+  const gifDurationSeconds = normalizeGifDuration(gifDurationInput.value);
+  const gifResolution = normalizeGifResolution(gifResolutionInput.value);
+  const progressId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const totalFrames = gifDurationSeconds * 2;
+
+  activeGifProgressId = progressId;
+  createGifButton.disabled = true;
+  captureButton.disabled = true;
+  statusText.textContent = 'GIF 製作中...';
+  gifProgress.textContent = `製作中 0/${totalFrames}`;
+
+  try {
+    await saveDownloadSubfolder();
+    await saveGifSettings();
+
+    const result = await chrome.runtime.sendMessage({
+      type: 'CAPTURE_GIF',
+      durationSeconds: gifDurationSeconds,
+      outputResolution: gifResolution,
+      progressId
+    });
+
+    if (!result?.ok) {
+      const message = result?.message || 'GIF 製作失敗';
+      statusText.textContent = message;
+      gifProgress.textContent = message;
+      showPopupNotice(message, 'error');
+      return;
+    }
+
+    const finalStatus = buildFinalStatus(result);
+
+    await chrome.storage.local.set({
+      lastStatusText: finalStatus,
+      lastStatusAt: Date.now()
+    });
+
+    statusText.textContent = finalStatus;
+    gifProgress.textContent = finalStatus;
+    showPopupNotice(finalStatus, result.downloadError ? 'error' : 'success');
+  } catch (error) {
+    console.error(error);
+    statusText.textContent = 'GIF 製作失敗';
+    gifProgress.textContent = 'GIF 製作失敗';
+    showPopupNotice('GIF 製作失敗', 'error');
+  } finally {
+    activeGifProgressId = '';
+    createGifButton.disabled = false;
+    captureButton.disabled = false;
+  }
+}
+
+function handleRuntimeMessage(message) {
+  if (message?.type !== 'GIF_PROGRESS' || message.progressId !== activeGifProgressId) {
+    return false;
+  }
+
+  gifProgress.textContent = `製作中 ${message.done}/${message.total}`;
+  return false;
 }
 
 async function captureScreenshot() {
@@ -317,4 +414,16 @@ function normalizeStoredResolution(value) {
   }
 
   return 'original';
+}
+
+function normalizeGifDuration(value) {
+  return Math.min(Math.max(Math.round(Number(value) || DEFAULT_SETTINGS.gifDurationSeconds), 1), 10);
+}
+
+function normalizeGifResolution(value) {
+  if (['720p', '1080p', '1440p'].includes(value)) {
+    return value;
+  }
+
+  return DEFAULT_SETTINGS.gifResolution;
 }

@@ -1,11 +1,17 @@
+importScripts('gif-encoder.js');
+
 const ANI_URL_PATTERN = /^https:\/\/ani\.gamer\.com\.tw\//;
+const GIF_CAPTURE_INTERVAL_MS = 500;
+const GIF_FRAMES_PER_SECOND = 2;
 const DEFAULT_SETTINGS = {
   autoDownload: true,
   copyToClipboard: false,
   downloadSubfolder: 'AnimeScreenshots',
   organizeByAnimeName: true,
   pageShortcut: 'Shift+C',
-  outputResolution: 'original'
+  outputResolution: 'original',
+  gifDurationSeconds: 5,
+  gifResolution: '720p'
 };
 
 class FriendlyError extends Error {
@@ -16,24 +22,43 @@ class FriendlyError extends Error {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== 'CAPTURE_SCREENSHOT') {
-    return false;
+  if (message?.type === 'CAPTURE_SCREENSHOT') {
+    captureActiveTab(sender.tab, {
+      returnDataUrl: Boolean(message.returnDataUrl)
+    })
+      .then(sendResponse)
+      .catch((error) => {
+        console.error(error);
+        sendResponse({
+          ok: false,
+          statusText: '截圖失敗',
+          message: '截圖失敗，可能受到網站限制'
+        });
+      });
+
+    return true;
   }
 
-  captureActiveTab(sender.tab, {
-    returnDataUrl: Boolean(message.returnDataUrl)
-  })
-    .then(sendResponse)
-    .catch((error) => {
-      console.error(error);
-      sendResponse({
-        ok: false,
-        statusText: '截圖失敗',
-        message: '截圖失敗，可能受到網站限制'
+  if (message?.type === 'CAPTURE_GIF') {
+    captureGif(sender.tab, {
+      durationSeconds: message.durationSeconds,
+      outputResolution: message.outputResolution,
+      progressId: message.progressId
+    })
+      .then(sendResponse)
+      .catch((error) => {
+        console.error(error);
+        sendResponse({
+          ok: false,
+          statusText: 'GIF 製作失敗',
+          message: 'GIF 製作失敗，可能受到網站限制'
+        });
       });
-    });
 
-  return true;
+    return true;
+  }
+
+  return false;
 });
 
 chrome.commands.onCommand.addListener((command) => {
@@ -113,6 +138,111 @@ async function captureActiveTab(sourceTab, options = {}) {
   }
 }
 
+async function captureGif(sourceTab, options = {}) {
+  const tab = sourceTab?.id ? sourceTab : await getActiveTab();
+  const settings = await getSettings();
+  const durationSeconds = normalizeGifDurationSeconds(options.durationSeconds || settings.gifDurationSeconds);
+  const outputResolution = normalizeGifResolution(options.outputResolution || settings.gifResolution);
+  const frameCount = Math.max(1, durationSeconds * GIF_FRAMES_PER_SECOND);
+  const progressId = options.progressId || '';
+
+  if (!tab?.id || !ANI_URL_PATTERN.test(tab.url || '')) {
+    const result = {
+      ok: false,
+      statusText: 'GIF 製作失敗',
+      message: '請先切換到動畫瘋播放頁面'
+    };
+    await saveLastStatus(result.statusText);
+    return result;
+  }
+
+  try {
+    const playerInfo = await getPlayerInfo(tab.id);
+    const frames = [];
+    let targetSize = null;
+    let usedPlayer = false;
+
+    await sendGifProgress(progressId, 0, frameCount);
+
+    for (let index = 0; index < frameCount; index += 1) {
+      if (index > 0) {
+        await delay(GIF_CAPTURE_INTERVAL_MS);
+      }
+
+      const screenshotUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+        format: 'png'
+      });
+      const processed = await renderScreenshotCanvas(screenshotUrl, playerInfo, outputResolution);
+
+      if (processed.probablyBlack) {
+        throw new FriendlyError('GIF 製作失敗，可能受到網站限制');
+      }
+
+      if (!targetSize) {
+        targetSize = {
+          width: processed.canvas.width,
+          height: processed.canvas.height
+        };
+      }
+
+      frames.push({
+        imageData: getCanvasImageData(processed.canvas, targetSize),
+        delayCentiseconds: Math.round(100 / GIF_FRAMES_PER_SECOND)
+      });
+      usedPlayer = usedPlayer || processed.usedPlayer;
+
+      await sendGifProgress(progressId, index + 1, frameCount);
+    }
+
+    const gifBytes = encodeGif(frames, {
+      width: targetSize.width,
+      height: targetSize.height,
+      delayCentiseconds: Math.round(100 / GIF_FRAMES_PER_SECOND),
+      loop: 0
+    });
+    const gifBlob = new Blob([gifBytes], {
+      type: 'image/gif'
+    });
+    const filename = buildFilename(playerInfo.title, settings, 'gif');
+    const dataUrl = await blobToDataUrl(gifBlob);
+    let downloadError = '';
+
+    try {
+      await downloadWithChrome(dataUrl, filename);
+    } catch (error) {
+      downloadError = '下載失敗';
+      console.warn(error);
+    }
+
+    const statusText = downloadError ? 'GIF 製作完成，但下載失敗' : 'GIF 製作完成';
+    await showPageToast(tab.id, statusText, downloadError ? 'error' : 'success', filename);
+    await saveLastStatus(statusText);
+
+    return {
+      ok: true,
+      statusText,
+      filename,
+      frameCount,
+      usedPlayer,
+      downloaded: !downloadError,
+      downloadError
+    };
+  } catch (error) {
+    const message = error instanceof FriendlyError
+      ? error.message
+      : 'GIF 製作失敗，可能受到網站限制';
+
+    await showPageToast(tab.id, 'GIF 製作失敗，可能受到網站限制', 'error');
+    await saveLastStatus('GIF 製作失敗');
+
+    return {
+      ok: false,
+      statusText: 'GIF 製作失敗',
+      message
+    };
+  }
+}
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({
     active: true,
@@ -162,18 +292,22 @@ async function showPageToast(tabId, text, tone, detail = '') {
 }
 
 async function cropScreenshot(dataUrl, playerInfo, settings) {
+  const processed = await renderScreenshotCanvas(dataUrl, playerInfo, settings.outputResolution);
+  const outputBlob = await processed.canvas.convertToBlob({
+    type: 'image/png'
+  });
+
+  return {
+    dataUrl: await blobToDataUrl(outputBlob),
+    usedPlayer: processed.usedPlayer,
+    probablyBlack: processed.probablyBlack
+  };
+}
+
+async function renderScreenshotCanvas(dataUrl, playerInfo, outputResolution) {
   const imageBlob = await dataUrlToBlob(dataUrl);
   const bitmap = await createImageBitmap(imageBlob);
   const rect = normalizeCropRect(playerInfo?.rect, playerInfo?.viewport, bitmap);
-
-  if (!rect && settings.outputResolution === 'original') {
-    return {
-      dataUrl,
-      usedPlayer: false,
-      probablyBlack: false
-    };
-  }
-
   const source = rect || {
     x: 0,
     y: 0,
@@ -197,17 +331,41 @@ async function cropScreenshot(dataUrl, playerInfo, settings) {
     source.height
   );
 
-  const outputCanvas = resizeCanvas(canvas, settings.outputResolution);
+  const outputCanvas = resizeCanvas(canvas, outputResolution);
   const probablyBlack = Boolean(rect) && isCanvasProbablyBlack(outputCanvas);
-  const outputBlob = await outputCanvas.convertToBlob({
-    type: 'image/png'
-  });
 
   return {
-    dataUrl: await blobToDataUrl(outputBlob),
+    canvas: outputCanvas,
     usedPlayer: Boolean(rect),
     probablyBlack
   };
+}
+
+function getCanvasImageData(canvas, targetSize) {
+  let outputCanvas = canvas;
+
+  if (targetSize && (canvas.width !== targetSize.width || canvas.height !== targetSize.height)) {
+    outputCanvas = resizeCanvasToDimensions(canvas, targetSize.width, targetSize.height);
+  }
+
+  const context = outputCanvas.getContext('2d', {
+    willReadFrequently: true
+  });
+
+  return context.getImageData(0, 0, outputCanvas.width, outputCanvas.height);
+}
+
+function resizeCanvasToDimensions(canvas, width, height) {
+  const resizedCanvas = new OffscreenCanvas(width, height);
+  const context = resizedCanvas.getContext('2d', {
+    willReadFrequently: true
+  });
+
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  context.drawImage(canvas, 0, 0, width, height);
+
+  return resizedCanvas;
 }
 
 function resizeCanvas(canvas, outputResolution) {
@@ -245,6 +403,18 @@ function getMaxOutputHeight(outputResolution) {
   }
 
   return 0;
+}
+
+function normalizeGifDurationSeconds(value) {
+  return clamp(Math.round(Number(value) || DEFAULT_SETTINGS.gifDurationSeconds), 1, 10);
+}
+
+function normalizeGifResolution(value) {
+  if (['720p', '1080p', '1440p'].includes(value)) {
+    return value;
+  }
+
+  return DEFAULT_SETTINGS.gifResolution;
 }
 
 function normalizeCropRect(rect, viewport, bitmap) {
@@ -387,10 +557,10 @@ async function ensureOffscreenDocument() {
   });
 }
 
-function buildFilename(title, settings) {
+function buildFilename(title, settings, extension = 'png') {
   const animeName = sanitizeFilename(title);
-  const baseName = animeName || 'AnimeScreenshot';
-  const filename = `${baseName}_${formatTimestamp(new Date())}.png`;
+  const baseName = animeName || (extension === 'gif' ? 'AnimeGif' : 'AnimeScreenshot');
+  const filename = `${baseName}_${formatTimestamp(new Date())}.${extension}`;
   const folder = sanitizeDownloadSubfolder(settings.downloadSubfolder);
   const pathParts = [];
 
@@ -437,6 +607,29 @@ function formatTimestamp(date) {
 
 function pad(value) {
   return String(value).padStart(2, '0');
+}
+
+async function sendGifProgress(progressId, done, total) {
+  if (!progressId) {
+    return;
+  }
+
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'GIF_PROGRESS',
+      progressId,
+      done,
+      total
+    });
+  } catch (error) {
+    // Popup 關閉時不影響 GIF 產生。
+  }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function dataUrlToBlob(dataUrl) {

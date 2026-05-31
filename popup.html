@@ -78,6 +78,37 @@
           </select>
         </label>
 
+        <section class="gif-panel" aria-label="GIF 製作">
+          <div class="panel-title">
+            <strong>GIF 小片段</strong>
+            <small>使用目前可見畫面製作 GIF，不包含聲音。</small>
+          </div>
+
+          <label class="field">
+            <span>GIF 長度</span>
+            <small>最多 10 秒，每秒擷取 2 張畫面。</small>
+            <div class="range-row">
+              <input id="gifDuration" type="range" min="1" max="10" step="1">
+              <output id="gifDurationValue">5 秒</output>
+            </div>
+          </label>
+
+          <label class="field">
+            <span>GIF 解析度</span>
+            <small>解析度越高，檔案越大、製作時間越久。</small>
+            <select id="gifResolution">
+              <option value="720p">720P</option>
+              <option value="1080p">1080P</option>
+              <option value="1440p">1440P</option>
+            </select>
+          </label>
+
+          <button id="createGifButton" class="secondary-button" type="button">
+            開始製作 GIF
+          </button>
+          <p id="gifProgress" class="progress-text" aria-live="polite">尚未製作 GIF</p>
+        </section>
+
         <label class="field">
           <span>頁面快捷鍵</span>
           <small>按下錄製後，直接按新的鍵盤組合。</small>
