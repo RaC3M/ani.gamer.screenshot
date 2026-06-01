@@ -6,7 +6,8 @@ const DEFAULT_SETTINGS = {
   pageShortcut: 'Shift+C',
   outputResolution: 'original',
   gifDurationSeconds: 5,
-  gifResolution: '720p'
+  gifResolution: '720p',
+  gifFps: 8
 };
 
 const captureButton = document.getElementById('captureButton');
@@ -24,6 +25,7 @@ const outputResolutionInput = document.getElementById('outputResolution');
 const gifDurationInput = document.getElementById('gifDuration');
 const gifDurationValue = document.getElementById('gifDurationValue');
 const gifResolutionInput = document.getElementById('gifResolution');
+const gifFpsInput = document.getElementById('gifFps');
 const createGifButton = document.getElementById('createGifButton');
 const gifProgress = document.getElementById('gifProgress');
 const settingsMessage = document.getElementById('settingsMessage');
@@ -52,6 +54,7 @@ async function initPopup() {
   gifDurationInput.value = normalizeGifDuration(settings.gifDurationSeconds);
   gifDurationValue.textContent = `${gifDurationInput.value} 秒`;
   gifResolutionInput.value = normalizeGifResolution(settings.gifResolution);
+  gifFpsInput.value = normalizeGifFps(settings.gifFps);
   statusText.textContent = status.lastStatusText;
 
   autoDownloadInput.addEventListener('change', saveQuickSettings);
@@ -68,6 +71,7 @@ async function initPopup() {
   gifDurationInput.addEventListener('input', updateGifDurationLabel);
   gifDurationInput.addEventListener('change', saveGifSettings);
   gifResolutionInput.addEventListener('change', saveGifSettings);
+  gifFpsInput.addEventListener('change', saveGifSettings);
   createGifButton.addEventListener('click', createGif);
 }
 
@@ -181,14 +185,17 @@ function updateGifDurationLabel() {
 async function saveGifSettings() {
   const gifDurationSeconds = normalizeGifDuration(gifDurationInput.value);
   const gifResolution = normalizeGifResolution(gifResolutionInput.value);
+  const gifFps = normalizeGifFps(gifFpsInput.value);
 
   gifDurationInput.value = gifDurationSeconds;
   gifDurationValue.textContent = `${gifDurationSeconds} 秒`;
   gifResolutionInput.value = gifResolution;
+  gifFpsInput.value = gifFps;
 
   await chrome.storage.sync.set({
     gifDurationSeconds,
-    gifResolution
+    gifResolution,
+    gifFps
   });
   showSettingsMessage('GIF 設定已儲存');
 }
@@ -196,14 +203,15 @@ async function saveGifSettings() {
 async function createGif() {
   const gifDurationSeconds = normalizeGifDuration(gifDurationInput.value);
   const gifResolution = normalizeGifResolution(gifResolutionInput.value);
+  const gifFps = normalizeGifFps(gifFpsInput.value);
   const progressId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const totalFrames = gifDurationSeconds * 2;
+  const totalFrames = gifDurationSeconds * gifFps;
 
   activeGifProgressId = progressId;
   createGifButton.disabled = true;
   captureButton.disabled = true;
   statusText.textContent = 'GIF 製作中...';
-  gifProgress.textContent = `製作中 0/${totalFrames}`;
+  gifProgress.textContent = `擷取 GIF 影格中... 0/${totalFrames}`;
 
   try {
     await saveDownloadSubfolder();
@@ -213,6 +221,7 @@ async function createGif() {
       type: 'CAPTURE_GIF',
       durationSeconds: gifDurationSeconds,
       outputResolution: gifResolution,
+      fps: gifFps,
       progressId
     });
 
@@ -251,7 +260,11 @@ function handleRuntimeMessage(message) {
     return false;
   }
 
-  gifProgress.textContent = `製作中 ${message.done}/${message.total}`;
+  if (message.text) {
+    gifProgress.textContent = `${message.text} ${message.done}/${message.total}`;
+  } else {
+    gifProgress.textContent = `製作中 ${message.done}/${message.total}`;
+  }
   return false;
 }
 
@@ -426,4 +439,14 @@ function normalizeGifResolution(value) {
   }
 
   return DEFAULT_SETTINGS.gifResolution;
+}
+
+function normalizeGifFps(value) {
+  const fps = Math.round(Number(value) || DEFAULT_SETTINGS.gifFps);
+
+  if ([5, 8, 12].includes(fps)) {
+    return String(fps);
+  }
+
+  return String(DEFAULT_SETTINGS.gifFps);
 }

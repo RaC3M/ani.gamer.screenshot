@@ -81,12 +81,12 @@
         <section class="gif-panel" aria-label="GIF 製作">
           <div class="panel-title">
             <strong>GIF 小片段</strong>
-            <small>使用目前可見畫面製作 GIF，不包含聲音。</small>
+            <small>直接擷取影片影格製作 GIF，不包含聲音。</small>
           </div>
 
           <label class="field">
             <span>GIF 長度</span>
-            <small>最多 10 秒，每秒擷取 2 張畫面。</small>
+            <small>最多 10 秒，FPS 可在下方調整。</small>
             <div class="range-row">
               <input id="gifDuration" type="range" min="1" max="10" step="1">
               <output id="gifDurationValue">5 秒</output>
@@ -100,6 +100,16 @@
               <option value="720p">720P</option>
               <option value="1080p">1080P</option>
               <option value="1440p">1440P</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>GIF FPS</span>
+            <small>FPS 越高越順，但製作時間與檔案大小也會增加。</small>
+            <select id="gifFps">
+              <option value="5">5 FPS</option>
+              <option value="8">8 FPS</option>
+              <option value="12">12 FPS</option>
             </select>
           </label>
 

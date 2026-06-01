@@ -1,8 +1,7 @@
 importScripts('gif-encoder.js');
 
 const ANI_URL_PATTERN = /^https:\/\/ani\.gamer\.com\.tw\//;
-const GIF_CAPTURE_INTERVAL_MS = 500;
-const GIF_FRAMES_PER_SECOND = 2;
+const DEFAULT_GIF_FPS = 8;
 const DEFAULT_SETTINGS = {
   autoDownload: true,
   copyToClipboard: false,
@@ -11,7 +10,8 @@ const DEFAULT_SETTINGS = {
   pageShortcut: 'Shift+C',
   outputResolution: 'original',
   gifDurationSeconds: 5,
-  gifResolution: '720p'
+  gifResolution: '720p',
+  gifFps: DEFAULT_GIF_FPS
 };
 
 class FriendlyError extends Error {
@@ -143,7 +143,7 @@ async function captureGif(sourceTab, options = {}) {
   const settings = await getSettings();
   const durationSeconds = normalizeGifDurationSeconds(options.durationSeconds || settings.gifDurationSeconds);
   const outputResolution = normalizeGifResolution(options.outputResolution || settings.gifResolution);
-  const frameCount = Math.max(1, durationSeconds * GIF_FRAMES_PER_SECOND);
+  const gifFps = normalizeGifFps(options.fps || settings.gifFps);
   const progressId = options.progressId || '';
 
   if (!tab?.id || !ANI_URL_PATTERN.test(tab.url || '')) {
@@ -157,53 +157,44 @@ async function captureGif(sourceTab, options = {}) {
   }
 
   try {
-    const playerInfo = await getPlayerInfo(tab.id);
+    // GIF 不使用 captureVisibleTab 當影格來源，避免硬體加速或 video overlay 造成雜訊。
+    await sendGifProgress(progressId, 0, 100, '擷取 GIF 影格中...');
+    const frameCapture = await captureGifFramesFromVideo(tab, {
+      durationSeconds,
+      fps: gifFps,
+      width: getGifOutputWidth(outputResolution)
+    });
+
+    if (!frameCapture?.ok || !frameCapture.frames?.length) {
+      throw new FriendlyError(frameCapture?.message || 'GIF 影格擷取失敗');
+    }
+
+    await sendGifProgress(progressId, 50, 100, '產生 GIF 中...');
     const frames = [];
-    let targetSize = null;
-    let usedPlayer = false;
 
-    await sendGifProgress(progressId, 0, frameCount);
-
-    for (let index = 0; index < frameCount; index += 1) {
-      if (index > 0) {
-        await delay(GIF_CAPTURE_INTERVAL_MS);
-      }
-
-      const screenshotUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-        format: 'png'
-      });
-      const processed = await renderScreenshotCanvas(screenshotUrl, playerInfo, outputResolution);
-
-      if (processed.probablyBlack) {
-        throw new FriendlyError('GIF 製作失敗，可能受到網站限制');
-      }
-
-      if (!targetSize) {
-        targetSize = {
-          width: processed.canvas.width,
-          height: processed.canvas.height
-        };
-      }
+    for (let index = 0; index < frameCapture.frames.length; index += 1) {
+      const frame = frameCapture.frames[index];
+      const imageData = await dataUrlToImageData(frame.dataUrl, frameCapture.width, frameCapture.height);
 
       frames.push({
-        imageData: getCanvasImageData(processed.canvas, targetSize),
-        delayCentiseconds: Math.round(100 / GIF_FRAMES_PER_SECOND)
+        imageData,
+        delayCentiseconds: Math.max(1, Math.round((frame.delay || frameCapture.delay || 125) / 10))
       });
-      usedPlayer = usedPlayer || processed.usedPlayer;
 
-      await sendGifProgress(progressId, index + 1, frameCount);
+      const progress = 50 + Math.round(((index + 1) / frameCapture.frames.length) * 40);
+      await sendGifProgress(progressId, progress, 100, '產生 GIF 中...');
     }
 
     const gifBytes = encodeGif(frames, {
-      width: targetSize.width,
-      height: targetSize.height,
-      delayCentiseconds: Math.round(100 / GIF_FRAMES_PER_SECOND),
+      width: frameCapture.width,
+      height: frameCapture.height,
+      delayCentiseconds: Math.max(1, Math.round((frameCapture.delay || 125) / 10)),
       loop: 0
     });
     const gifBlob = new Blob([gifBytes], {
       type: 'image/gif'
     });
-    const filename = buildFilename(playerInfo.title, settings, 'gif');
+    const filename = buildFilename(frameCapture.title, settings, 'gif');
     const dataUrl = await blobToDataUrl(gifBlob);
     let downloadError = '';
 
@@ -222,8 +213,11 @@ async function captureGif(sourceTab, options = {}) {
       ok: true,
       statusText,
       filename,
-      frameCount,
-      usedPlayer,
+      frameCount: frameCapture.frames.length,
+      width: frameCapture.width,
+      height: frameCapture.height,
+      fps: frameCapture.fps,
+      usedPlayer: true,
       downloaded: !downloadError,
       downloadError
     };
@@ -275,6 +269,31 @@ async function getPlayerInfo(tabId) {
     return response || {};
   } catch (error) {
     return {};
+  }
+}
+
+async function captureGifFramesFromVideo(tab, options) {
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: 'CAPTURE_GIF_FRAMES_FROM_VIDEO',
+      ...options
+    });
+
+    if (response?.ok && response.frames?.length) {
+      return response;
+    }
+
+    console.warn('GIF video frame capture failed:', response?.message);
+    return {
+      ok: false,
+      message: response?.message || 'GIF 影格擷取失敗'
+    };
+  } catch (error) {
+    console.warn('GIF video frame capture message failed:', error);
+    return {
+      ok: false,
+      message: 'GIF 影格擷取失敗'
+    };
   }
 }
 
@@ -341,33 +360,6 @@ async function renderScreenshotCanvas(dataUrl, playerInfo, outputResolution) {
   };
 }
 
-function getCanvasImageData(canvas, targetSize) {
-  let outputCanvas = canvas;
-
-  if (targetSize && (canvas.width !== targetSize.width || canvas.height !== targetSize.height)) {
-    outputCanvas = resizeCanvasToDimensions(canvas, targetSize.width, targetSize.height);
-  }
-
-  const context = outputCanvas.getContext('2d', {
-    willReadFrequently: true
-  });
-
-  return context.getImageData(0, 0, outputCanvas.width, outputCanvas.height);
-}
-
-function resizeCanvasToDimensions(canvas, width, height) {
-  const resizedCanvas = new OffscreenCanvas(width, height);
-  const context = resizedCanvas.getContext('2d', {
-    willReadFrequently: true
-  });
-
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
-  context.drawImage(canvas, 0, 0, width, height);
-
-  return resizedCanvas;
-}
-
 function resizeCanvas(canvas, outputResolution) {
   const maxHeight = getMaxOutputHeight(outputResolution);
 
@@ -409,12 +401,34 @@ function normalizeGifDurationSeconds(value) {
   return clamp(Math.round(Number(value) || DEFAULT_SETTINGS.gifDurationSeconds), 1, 10);
 }
 
+function normalizeGifFps(value) {
+  const fps = Math.round(Number(value) || DEFAULT_GIF_FPS);
+
+  if ([5, 8, 12].includes(fps)) {
+    return fps;
+  }
+
+  return DEFAULT_GIF_FPS;
+}
+
 function normalizeGifResolution(value) {
   if (['720p', '1080p', '1440p'].includes(value)) {
     return value;
   }
 
   return DEFAULT_SETTINGS.gifResolution;
+}
+
+function getGifOutputWidth(outputResolution) {
+  if (outputResolution === '1080p') {
+    return 960;
+  }
+
+  if (outputResolution === '1440p') {
+    return 1280;
+  }
+
+  return 640;
 }
 
 function normalizeCropRect(rect, viewport, bitmap) {
@@ -609,7 +623,7 @@ function pad(value) {
   return String(value).padStart(2, '0');
 }
 
-async function sendGifProgress(progressId, done, total) {
+async function sendGifProgress(progressId, done, total, text = '') {
   if (!progressId) {
     return;
   }
@@ -619,22 +633,34 @@ async function sendGifProgress(progressId, done, total) {
       type: 'GIF_PROGRESS',
       progressId,
       done,
-      total
+      total,
+      text
     });
   } catch (error) {
     // Popup 關閉時不影響 GIF 產生。
   }
 }
 
-function delay(ms) {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 async function dataUrlToBlob(dataUrl) {
   const response = await fetch(dataUrl);
   return response.blob();
+}
+
+async function dataUrlToImageData(dataUrl, width, height) {
+  try {
+    const imageBlob = await dataUrlToBlob(dataUrl);
+    const bitmap = await createImageBitmap(imageBlob);
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext('2d', {
+      willReadFrequently: true
+    });
+
+    context.drawImage(bitmap, 0, 0, width, height);
+    return context.getImageData(0, 0, width, height);
+  } catch (error) {
+    console.warn(error);
+    throw new FriendlyError('GIF 產生失敗');
+  }
 }
 
 async function blobToDataUrl(blob) {

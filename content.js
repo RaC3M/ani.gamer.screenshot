@@ -31,6 +31,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message?.type === 'CAPTURE_GIF_FRAMES_FROM_VIDEO') {
+    captureGifFramesFromVideo(message)
+      .then(sendResponse)
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          message: error?.message || 'GIF 影格擷取失敗'
+        });
+      });
+    return true;
+  }
+
   if (message?.type === 'SHOW_CAPTURE_TOAST') {
     showToast(message.text, message.tone, message.detail);
     sendResponse({
@@ -173,6 +185,210 @@ function getPlayerInfo() {
   };
 }
 
+async function captureGifFramesFromVideo(options = {}) {
+  const video = findAnimeVideo();
+
+  if (!video) {
+    return {
+      ok: false,
+      message: '找不到影片元素'
+    };
+  }
+
+  if (!video.videoWidth || !video.videoHeight || !Number.isFinite(video.duration)) {
+    return {
+      ok: false,
+      message: '影片尚未載入完成'
+    };
+  }
+
+  const fps = normalizeGifFps(options.fps);
+  const startTime = normalizeTimeValue(options.startTime, video.currentTime);
+  const requestedEndTime = Number.isFinite(Number(options.endTime))
+    ? Number(options.endTime)
+    : startTime + normalizeGifDuration(options.durationSeconds);
+
+  if (!Number.isFinite(startTime) || !Number.isFinite(requestedEndTime) || requestedEndTime <= startTime) {
+    return {
+      ok: false,
+      message: 'GIF 時間範圍不正確'
+    };
+  }
+
+  const safeStartTime = clampNumber(startTime, 0, video.duration);
+  const safeEndTime = Math.min(requestedEndTime, safeStartTime + 15, video.duration);
+  const sourceWidth = video.videoWidth;
+  const sourceHeight = video.videoHeight;
+  const outputWidth = normalizeGifOutputWidth(options.width, sourceWidth);
+  const outputHeight = Math.max(1, Math.round(sourceHeight * (outputWidth / sourceWidth)));
+  const frameDelay = Math.round(1000 / fps);
+  const sampleInterval = 1 / fps;
+  const estimatedFrames = Math.ceil((safeEndTime - safeStartTime) * fps);
+
+  if (estimatedFrames <= 0) {
+    return {
+      ok: false,
+      message: 'GIF 時間範圍不正確'
+    };
+  }
+
+  if (estimatedFrames > 180) {
+    return {
+      ok: false,
+      message: 'GIF 影格數過多，請縮短時間或降低 FPS'
+    };
+  }
+
+  const frames = [];
+  const originalTime = video.currentTime;
+  const originalPaused = video.paused;
+  const originalMuted = video.muted;
+  const originalPlaybackRate = video.playbackRate;
+
+  try {
+    video.pause();
+    video.muted = true;
+    video.playbackRate = 1;
+
+    for (let index = 0; index < estimatedFrames; index += 1) {
+      const captureTime = Math.min(safeStartTime + index * sampleInterval, safeEndTime);
+      const dataUrl = await captureVideoFrameAtTime(video, captureTime, outputWidth, outputHeight);
+
+      frames.push({
+        dataUrl,
+        delay: frameDelay,
+        time: captureTime
+      });
+    }
+
+    return {
+      ok: true,
+      frames,
+      width: outputWidth,
+      height: outputHeight,
+      fps,
+      delay: frameDelay,
+      startTime: safeStartTime,
+      endTime: safeEndTime,
+      title: getAnimeTitle()
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error?.message || 'GIF 影格擷取失敗'
+    };
+  } finally {
+    video.muted = originalMuted;
+    video.playbackRate = originalPlaybackRate;
+
+    try {
+      await seekVideo(video, originalTime);
+    } catch (error) {
+      console.warn('Failed to restore video time:', error);
+    }
+
+    if (originalPaused) {
+      video.pause();
+    } else {
+      video.play().catch(() => {});
+    }
+  }
+}
+
+async function captureVideoFrameAtTime(video, time, width, height) {
+  await seekVideo(video, time);
+  await waitVideoFrame(video);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext('2d', {
+    willReadFrequently: true
+  });
+
+  if (!context) {
+    throw new Error('GIF 影格擷取失敗');
+  }
+
+  context.drawImage(video, 0, 0, width, height);
+  return canvas.toDataURL('image/png');
+}
+
+function findAnimeVideo() {
+  return document.querySelector('#ani_video_html5_api') || document.querySelector('video');
+}
+
+function seekVideo(video, time) {
+  return new Promise((resolve, reject) => {
+    const safeTime = Math.max(0, Math.min(time, video.duration || time));
+    let timer = 0;
+
+    if (Math.abs(video.currentTime - safeTime) < 0.02) {
+      resolve();
+      return;
+    }
+
+    const cleanup = () => {
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', onError);
+      window.clearTimeout(timer);
+    };
+
+    const onSeeked = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = () => {
+      cleanup();
+      reject(new Error('影片 seek 失敗'));
+    };
+
+    timer = window.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, 1200);
+
+    video.addEventListener('seeked', onSeeked, {
+      once: true
+    });
+    video.addEventListener('error', onError, {
+      once: true
+    });
+
+    video.currentTime = safeTime;
+  });
+}
+
+function waitVideoFrame(video) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      resolve();
+    };
+    const timer = window.setTimeout(finish, 300);
+
+    if ('requestVideoFrameCallback' in video) {
+      video.requestVideoFrameCallback(() => {
+        window.clearTimeout(timer);
+        finish();
+      });
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      window.clearTimeout(timer);
+      finish();
+    });
+  });
+}
+
 function findPlayerRect() {
   const candidates = [];
 
@@ -280,6 +496,35 @@ function cleanTitle(value) {
     .replace(/\s*[-|｜]\s*動畫瘋\s*$/u, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeTimeValue(value, fallback) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : fallback;
+}
+
+function normalizeGifDuration(value) {
+  const duration = Math.round(Number(value) || 5);
+  return clampNumber(duration, 1, 15);
+}
+
+function normalizeGifFps(value) {
+  const fps = Math.round(Number(value) || 8);
+
+  if ([5, 8, 12].includes(fps)) {
+    return fps;
+  }
+
+  return 8;
+}
+
+function normalizeGifOutputWidth(value, sourceWidth) {
+  const width = Math.round(Number(value) || Math.min(sourceWidth, 960));
+  return clampNumber(width, 1, sourceWidth);
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(Math.max(value, min), max);
 }
 
 function showToast(text, tone = 'success', detail = '') {
