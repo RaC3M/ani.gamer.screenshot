@@ -39,6 +39,7 @@
         "https://ani.gamer.com.tw/*"
       ],
       "js": [
+        "gif-encoder.js",
         "content.js"
       ],
       "run_at": "document_idle"

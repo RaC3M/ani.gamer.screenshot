@@ -1,13 +1,14 @@
 importScripts('gif-encoder.js');
 
 const ANI_URL_PATTERN = /^https:\/\/ani\.gamer\.com\.tw\//;
-const DEFAULT_GIF_FPS = 8;
+const DEFAULT_GIF_FPS = 30;
 const DEFAULT_SETTINGS = {
   autoDownload: true,
   copyToClipboard: false,
   downloadSubfolder: 'AnimeScreenshots',
   organizeByAnimeName: true,
   pageShortcut: 'Shift+C',
+  gifShortcut: 'Shift+G',
   outputResolution: 'original',
   gifDurationSeconds: 5,
   gifResolution: '720p',
@@ -39,10 +40,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.type === 'OPEN_GIF_PANEL') {
+    openGifPanel()
+      .then(sendResponse)
+      .catch((error) => {
+        console.warn(error);
+        sendResponse({
+          ok: false,
+          message: '無法開啟 GIF 製作面板'
+        });
+      });
+
+    return true;
+  }
+
+  if (message?.type === 'GET_GIF_VIDEO_INFO') {
+    getGifVideoInfo()
+      .then(sendResponse)
+      .catch((error) => {
+        console.warn(error);
+        sendResponse({
+          ok: false,
+          message: '讀取影片時間失敗'
+        });
+      });
+
+    return true;
+  }
+
   if (message?.type === 'CAPTURE_GIF') {
     captureGif(sender.tab, {
+      startTime: message.startTime,
+      endTime: message.endTime,
       durationSeconds: message.durationSeconds,
       outputResolution: message.outputResolution,
+      fps: message.fps,
       progressId: message.progressId
     })
       .then(sendResponse)
@@ -141,6 +173,8 @@ async function captureActiveTab(sourceTab, options = {}) {
 async function captureGif(sourceTab, options = {}) {
   const tab = sourceTab?.id ? sourceTab : await getActiveTab();
   const settings = await getSettings();
+  const startTime = normalizeOptionalNumber(options.startTime);
+  const endTime = normalizeOptionalNumber(options.endTime);
   const durationSeconds = normalizeGifDurationSeconds(options.durationSeconds || settings.gifDurationSeconds);
   const outputResolution = normalizeGifResolution(options.outputResolution || settings.gifResolution);
   const gifFps = normalizeGifFps(options.fps || settings.gifFps);
@@ -159,47 +193,24 @@ async function captureGif(sourceTab, options = {}) {
   try {
     // GIF 不使用 captureVisibleTab 當影格來源，避免硬體加速或 video overlay 造成雜訊。
     await sendGifProgress(progressId, 0, 100, '擷取 GIF 影格中...');
-    const frameCapture = await captureGifFramesFromVideo(tab, {
+    const gifCapture = await captureGifFromVideo(tab, {
+      startTime,
+      endTime,
       durationSeconds,
       fps: gifFps,
-      width: getGifOutputWidth(outputResolution)
+      width: getGifOutputWidth(outputResolution),
+      progressId
     });
 
-    if (!frameCapture?.ok || !frameCapture.frames?.length) {
-      throw new FriendlyError(frameCapture?.message || 'GIF 影格擷取失敗');
+    if (!gifCapture?.ok || !gifCapture.dataUrl) {
+      throw new FriendlyError(gifCapture?.message || 'GIF 產生失敗');
     }
 
-    await sendGifProgress(progressId, 50, 100, '產生 GIF 中...');
-    const frames = [];
-
-    for (let index = 0; index < frameCapture.frames.length; index += 1) {
-      const frame = frameCapture.frames[index];
-      const imageData = await dataUrlToImageData(frame.dataUrl, frameCapture.width, frameCapture.height);
-
-      frames.push({
-        imageData,
-        delayCentiseconds: Math.max(1, Math.round((frame.delay || frameCapture.delay || 125) / 10))
-      });
-
-      const progress = 50 + Math.round(((index + 1) / frameCapture.frames.length) * 40);
-      await sendGifProgress(progressId, progress, 100, '產生 GIF 中...');
-    }
-
-    const gifBytes = encodeGif(frames, {
-      width: frameCapture.width,
-      height: frameCapture.height,
-      delayCentiseconds: Math.max(1, Math.round((frameCapture.delay || 125) / 10)),
-      loop: 0
-    });
-    const gifBlob = new Blob([gifBytes], {
-      type: 'image/gif'
-    });
-    const filename = buildFilename(frameCapture.title, settings, 'gif');
-    const dataUrl = await blobToDataUrl(gifBlob);
+    const filename = buildFilename(gifCapture.title, settings, 'gif');
     let downloadError = '';
 
     try {
-      await downloadWithChrome(dataUrl, filename);
+      await downloadWithChrome(gifCapture.dataUrl, filename);
     } catch (error) {
       downloadError = '下載失敗';
       console.warn(error);
@@ -213,10 +224,10 @@ async function captureGif(sourceTab, options = {}) {
       ok: true,
       statusText,
       filename,
-      frameCount: frameCapture.frames.length,
-      width: frameCapture.width,
-      height: frameCapture.height,
-      fps: frameCapture.fps,
+      frameCount: gifCapture.frameCount,
+      width: gifCapture.width,
+      height: gifCapture.height,
+      fps: gifCapture.fps,
       usedPlayer: true,
       downloaded: !downloadError,
       downloadError
@@ -272,29 +283,74 @@ async function getPlayerInfo(tabId) {
   }
 }
 
-async function captureGifFramesFromVideo(tab, options) {
+async function captureGifFromVideo(tab, options) {
   try {
     const response = await chrome.tabs.sendMessage(tab.id, {
-      type: 'CAPTURE_GIF_FRAMES_FROM_VIDEO',
+      type: 'CAPTURE_GIF_FROM_VIDEO',
       ...options
     });
 
-    if (response?.ok && response.frames?.length) {
+    if (response?.ok && response.dataUrl) {
       return response;
     }
 
-    console.warn('GIF video frame capture failed:', response?.message);
+    console.warn('GIF video capture failed:', response?.message);
     return {
       ok: false,
-      message: response?.message || 'GIF 影格擷取失敗'
+      message: response?.message || 'GIF 產生失敗'
     };
   } catch (error) {
-    console.warn('GIF video frame capture message failed:', error);
+    console.warn('GIF video capture message failed:', error);
     return {
       ok: false,
-      message: 'GIF 影格擷取失敗'
+      message: 'GIF 產生失敗'
     };
   }
+}
+
+async function getGifVideoInfo() {
+  const tab = await getActiveTab();
+
+  if (!tab?.id || !ANI_URL_PATTERN.test(tab.url || '')) {
+    return {
+      ok: false,
+      message: '請先切換到動畫瘋播放頁面'
+    };
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: 'GET_GIF_VIDEO_INFO'
+    });
+
+    return response || {
+      ok: false,
+      message: '讀取影片時間失敗'
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: '讀取影片時間失敗'
+    };
+  }
+}
+
+async function openGifPanel() {
+  await chrome.storage.local.set({
+    openGifPanelRequestedAt: Date.now()
+  });
+
+  if (!chrome.action?.openPopup) {
+    return {
+      ok: false,
+      message: '此 Chrome 版本不支援自動開啟 Popup'
+    };
+  }
+
+  await chrome.action.openPopup();
+  return {
+    ok: true
+  };
 }
 
 async function showPageToast(tabId, text, tone, detail = '') {
@@ -401,10 +457,15 @@ function normalizeGifDurationSeconds(value) {
   return clamp(Math.round(Number(value) || DEFAULT_SETTINGS.gifDurationSeconds), 1, 10);
 }
 
+function normalizeOptionalNumber(value) {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : undefined;
+}
+
 function normalizeGifFps(value) {
   const fps = Math.round(Number(value) || DEFAULT_GIF_FPS);
 
-  if ([5, 8, 12].includes(fps)) {
+  if ([30, 50].includes(fps)) {
     return fps;
   }
 
@@ -644,23 +705,6 @@ async function sendGifProgress(progressId, done, total, text = '') {
 async function dataUrlToBlob(dataUrl) {
   const response = await fetch(dataUrl);
   return response.blob();
-}
-
-async function dataUrlToImageData(dataUrl, width, height) {
-  try {
-    const imageBlob = await dataUrlToBlob(dataUrl);
-    const bitmap = await createImageBitmap(imageBlob);
-    const canvas = new OffscreenCanvas(width, height);
-    const context = canvas.getContext('2d', {
-      willReadFrequently: true
-    });
-
-    context.drawImage(bitmap, 0, 0, width, height);
-    return context.getImageData(0, 0, width, height);
-  } catch (error) {
-    console.warn(error);
-    throw new FriendlyError('GIF 產生失敗');
-  }
 }
 
 async function blobToDataUrl(blob) {

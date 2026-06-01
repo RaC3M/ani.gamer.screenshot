@@ -22,6 +22,63 @@
         立即截圖
       </button>
 
+      <section id="gifPanel" class="gif-panel main-gif-panel" aria-label="GIF 製作">
+        <div class="panel-title">
+          <strong>GIF 小片段</strong>
+          <small>直接擷取影片影格製作 GIF，不包含聲音。</small>
+        </div>
+
+        <div class="timeline-field">
+          <div class="timeline-header">
+            <span>影片時間軸</span>
+            <button id="syncGifTimelineButton" class="tiny-button" type="button">目前時間</button>
+          </div>
+          <small>選擇 GIF 的開始與結束時間，最長 10 秒。</small>
+          <div class="time-input-grid">
+            <label>
+              <span>開始</span>
+              <input id="gifStartTime" type="text" inputmode="numeric" value="00:00" aria-label="GIF 開始時間">
+            </label>
+            <label>
+              <span>結束</span>
+              <input id="gifEndTime" type="text" inputmode="numeric" value="00:05" aria-label="GIF 結束時間">
+            </label>
+            <label>
+              <span>秒數</span>
+              <input id="gifClipSeconds" type="number" min="0.5" max="10" step="0.5" value="5" aria-label="GIF 秒數">
+            </label>
+          </div>
+          <div class="timeline-meta">
+            <span id="gifDurationValue">長度 5 秒</span>
+            <span id="gifVideoDurationValue">影片 00:00</span>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>GIF 解析度</span>
+          <small>解析度越高，檔案越大、製作時間越久。</small>
+          <select id="gifResolution">
+            <option value="720p">720P</option>
+            <option value="1080p">1080P</option>
+            <option value="1440p">1440P</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>GIF FPS</span>
+          <small>最低 30 FPS，高 FPS 會明顯增加檔案大小。</small>
+          <select id="gifFps">
+            <option value="30">30 FPS</option>
+            <option value="50">50 FPS</option>
+          </select>
+        </label>
+
+        <button id="createGifButton" class="secondary-button" type="button">
+          開始製作 GIF
+        </button>
+        <p id="gifProgress" class="progress-text" aria-live="polite">尚未製作 GIF</p>
+      </section>
+
       <section class="settings" aria-label="截圖設定">
         <label class="setting-row">
           <span>
@@ -78,53 +135,21 @@
           </select>
         </label>
 
-        <section class="gif-panel" aria-label="GIF 製作">
-          <div class="panel-title">
-            <strong>GIF 小片段</strong>
-            <small>直接擷取影片影格製作 GIF，不包含聲音。</small>
-          </div>
-
-          <label class="field">
-            <span>GIF 長度</span>
-            <small>最多 10 秒，FPS 可在下方調整。</small>
-            <div class="range-row">
-              <input id="gifDuration" type="range" min="1" max="10" step="1">
-              <output id="gifDurationValue">5 秒</output>
-            </div>
-          </label>
-
-          <label class="field">
-            <span>GIF 解析度</span>
-            <small>解析度越高，檔案越大、製作時間越久。</small>
-            <select id="gifResolution">
-              <option value="720p">720P</option>
-              <option value="1080p">1080P</option>
-              <option value="1440p">1440P</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>GIF FPS</span>
-            <small>FPS 越高越順，但製作時間與檔案大小也會增加。</small>
-            <select id="gifFps">
-              <option value="5">5 FPS</option>
-              <option value="8">8 FPS</option>
-              <option value="12">12 FPS</option>
-            </select>
-          </label>
-
-          <button id="createGifButton" class="secondary-button" type="button">
-            開始製作 GIF
-          </button>
-          <p id="gifProgress" class="progress-text" aria-live="polite">尚未製作 GIF</p>
-        </section>
-
         <label class="field">
           <span>頁面快捷鍵</span>
           <small>按下錄製後，直接按新的鍵盤組合。</small>
           <button id="recordShortcutButton" class="shortcut-recorder" type="button">
             <span class="shortcut-label">錄製快捷鍵</span>
             <span id="shortcutDisplay">Shift+C</span>
+          </button>
+        </label>
+
+        <label class="field">
+          <span>GIF 製作快捷鍵</span>
+          <small>在動畫瘋頁面按下後，會開啟 GIF 製作面板。</small>
+          <button id="recordGifShortcutButton" class="shortcut-recorder" type="button">
+            <span class="shortcut-label">錄製 GIF 快捷鍵</span>
+            <span id="gifShortcutDisplay">Shift+G</span>
           </button>
         </label>
 

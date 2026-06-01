@@ -231,7 +231,7 @@
         dictionary.set(key, nextCode);
         nextCode += 1;
 
-        if (nextCode === (1 << codeSize) && codeSize < 12) {
+        if (nextCode > (1 << codeSize) && codeSize < 12) {
           codeSize += 1;
         }
       } else {
