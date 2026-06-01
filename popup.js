@@ -4,13 +4,17 @@ const DEFAULT_SETTINGS = {
   downloadSubfolder: 'AnimeScreenshots',
   organizeByAnimeName: true,
   pageShortcut: 'Shift+C',
+  gifShortcut: 'Shift+G',
   outputResolution: 'original',
   gifDurationSeconds: 5,
   gifResolution: '720p',
-  gifFps: 8
+  gifFps: 30
 };
+const MIN_GIF_SECONDS = 0.5;
+const MAX_GIF_SECONDS = 10;
 
 const captureButton = document.getElementById('captureButton');
+const gifPanel = document.getElementById('gifPanel');
 const autoDownloadInput = document.getElementById('autoDownload');
 const copyToClipboardInput = document.getElementById('copyToClipboard');
 const settingsButton = document.getElementById('settingsButton');
@@ -21,9 +25,15 @@ const clearFolderButton = document.getElementById('clearFolderButton');
 const organizeByAnimeNameInput = document.getElementById('organizeByAnimeName');
 const recordShortcutButton = document.getElementById('recordShortcutButton');
 const shortcutDisplay = document.getElementById('shortcutDisplay');
+const recordGifShortcutButton = document.getElementById('recordGifShortcutButton');
+const gifShortcutDisplay = document.getElementById('gifShortcutDisplay');
 const outputResolutionInput = document.getElementById('outputResolution');
-const gifDurationInput = document.getElementById('gifDuration');
+const gifStartTimeInput = document.getElementById('gifStartTime');
+const gifEndTimeInput = document.getElementById('gifEndTime');
+const gifClipSecondsInput = document.getElementById('gifClipSeconds');
 const gifDurationValue = document.getElementById('gifDurationValue');
+const gifVideoDurationValue = document.getElementById('gifVideoDurationValue');
+const syncGifTimelineButton = document.getElementById('syncGifTimelineButton');
 const gifResolutionInput = document.getElementById('gifResolution');
 const gifFpsInput = document.getElementById('gifFps');
 const createGifButton = document.getElementById('createGifButton');
@@ -32,8 +42,13 @@ const settingsMessage = document.getElementById('settingsMessage');
 const statusText = document.getElementById('statusText');
 const popupNotice = document.getElementById('popupNotice');
 let currentShortcut = DEFAULT_SETTINGS.pageShortcut;
-let isRecordingShortcut = false;
+let currentGifShortcut = DEFAULT_SETTINGS.gifShortcut;
+let recordingShortcutType = '';
 let activeGifProgressId = '';
+let gifVideoInfo = {
+  currentTime: 0,
+  duration: 10
+};
 
 initPopup();
 chrome.runtime.onMessage.addListener(handleRuntimeMessage);
@@ -49,13 +64,14 @@ async function initPopup() {
   downloadSubfolderInput.value = normalizeDownloadSubfolder(settings.downloadSubfolder);
   organizeByAnimeNameInput.checked = settings.organizeByAnimeName;
   currentShortcut = settings.pageShortcut;
+  currentGifShortcut = settings.gifShortcut;
   shortcutDisplay.textContent = currentShortcut;
+  gifShortcutDisplay.textContent = currentGifShortcut;
   outputResolutionInput.value = normalizeStoredResolution(settings.outputResolution);
-  gifDurationInput.value = normalizeGifDuration(settings.gifDurationSeconds);
-  gifDurationValue.textContent = `${gifDurationInput.value} 秒`;
   gifResolutionInput.value = normalizeGifResolution(settings.gifResolution);
   gifFpsInput.value = normalizeGifFps(settings.gifFps);
   statusText.textContent = status.lastStatusText;
+  await loadGifVideoTimeline(settings);
 
   autoDownloadInput.addEventListener('change', saveQuickSettings);
   copyToClipboardInput.addEventListener('change', saveQuickSettings);
@@ -66,13 +82,17 @@ async function initPopup() {
   downloadSubfolderInput.addEventListener('blur', saveDownloadSubfolder);
   clearFolderButton.addEventListener('click', clearDownloadSubfolder);
   organizeByAnimeNameInput.addEventListener('change', saveOrganizeSetting);
-  recordShortcutButton.addEventListener('click', startShortcutRecording);
+  recordShortcutButton.addEventListener('click', () => startShortcutRecording('screenshot'));
+  recordGifShortcutButton.addEventListener('click', () => startShortcutRecording('gif'));
   outputResolutionInput.addEventListener('change', saveResolution);
-  gifDurationInput.addEventListener('input', updateGifDurationLabel);
-  gifDurationInput.addEventListener('change', saveGifSettings);
+  gifStartTimeInput.addEventListener('change', () => updateGifTimeline('start'));
+  gifEndTimeInput.addEventListener('change', () => updateGifTimeline('end'));
+  gifClipSecondsInput.addEventListener('input', () => updateGifTimeline('seconds'));
+  syncGifTimelineButton.addEventListener('click', syncGifTimelineToCurrentTime);
   gifResolutionInput.addEventListener('change', saveGifSettings);
   gifFpsInput.addEventListener('change', saveGifSettings);
   createGifButton.addEventListener('click', createGif);
+  await focusGifPanelIfRequested();
 }
 
 async function saveQuickSettings() {
@@ -120,20 +140,23 @@ async function saveOrganizeSetting() {
   );
 }
 
-function startShortcutRecording() {
-  if (isRecordingShortcut) {
+function startShortcutRecording(type) {
+  if (recordingShortcutType) {
     return;
   }
 
-  isRecordingShortcut = true;
-  shortcutDisplay.textContent = '錄製中...';
-  recordShortcutButton.classList.add('is-recording');
+  recordingShortcutType = type;
+  const display = type === 'gif' ? gifShortcutDisplay : shortcutDisplay;
+  const button = type === 'gif' ? recordGifShortcutButton : recordShortcutButton;
+
+  display.textContent = '錄製中...';
+  button.classList.add('is-recording');
   showSettingsMessage('請按下新的快捷鍵，按 Esc 取消');
   window.addEventListener('keydown', recordShortcut, true);
 }
 
 async function recordShortcut(event) {
-  if (!isRecordingShortcut) {
+  if (!recordingShortcutType) {
     return;
   }
 
@@ -143,6 +166,7 @@ async function recordShortcut(event) {
   if (event.key === 'Escape') {
     stopShortcutRecording();
     shortcutDisplay.textContent = currentShortcut;
+    gifShortcutDisplay.textContent = currentGifShortcut;
     showSettingsMessage('已取消錄製');
     return;
   }
@@ -154,20 +178,32 @@ async function recordShortcut(event) {
     return;
   }
 
-  currentShortcut = shortcut;
-  shortcutDisplay.textContent = shortcut;
-  stopShortcutRecording();
+  const type = recordingShortcutType;
 
-  await chrome.storage.sync.set({
-    pageShortcut: shortcut
-  });
-  await updateAnimePagesShortcut(shortcut);
+  if (type === 'gif') {
+    currentGifShortcut = shortcut;
+    gifShortcutDisplay.textContent = shortcut;
+    await chrome.storage.sync.set({
+      gifShortcut: shortcut
+    });
+    await updateAnimePagesGifShortcut(shortcut);
+  } else {
+    currentShortcut = shortcut;
+    shortcutDisplay.textContent = shortcut;
+    await chrome.storage.sync.set({
+      pageShortcut: shortcut
+    });
+    await updateAnimePagesShortcut(shortcut);
+  }
+
+  stopShortcutRecording();
   showSettingsMessage('快捷鍵已儲存');
 }
 
 function stopShortcutRecording() {
-  isRecordingShortcut = false;
+  recordingShortcutType = '';
   recordShortcutButton.classList.remove('is-recording');
+  recordGifShortcutButton.classList.remove('is-recording');
   window.removeEventListener('keydown', recordShortcut, true);
 }
 
@@ -178,34 +214,118 @@ async function saveResolution() {
   showSettingsMessage('解析度已儲存');
 }
 
-function updateGifDurationLabel() {
-  gifDurationValue.textContent = `${normalizeGifDuration(gifDurationInput.value)} 秒`;
-}
-
 async function saveGifSettings() {
-  const gifDurationSeconds = normalizeGifDuration(gifDurationInput.value);
   const gifResolution = normalizeGifResolution(gifResolutionInput.value);
   const gifFps = normalizeGifFps(gifFpsInput.value);
 
-  gifDurationInput.value = gifDurationSeconds;
-  gifDurationValue.textContent = `${gifDurationSeconds} 秒`;
   gifResolutionInput.value = gifResolution;
   gifFpsInput.value = gifFps;
 
   await chrome.storage.sync.set({
-    gifDurationSeconds,
     gifResolution,
     gifFps
   });
   showSettingsMessage('GIF 設定已儲存');
 }
 
+async function loadGifVideoTimeline(settings) {
+  const videoInfo = await getGifVideoInfo();
+  const duration = normalizeTimelineDuration(videoInfo?.duration);
+  const currentTime = normalizeTimelineTime(videoInfo?.currentTime, duration);
+  const defaultLength = normalizeGifDuration(settings.gifDurationSeconds);
+  const endTime = Math.min(currentTime + defaultLength, duration);
+  const startTime = Math.max(0, endTime - defaultLength);
+
+  gifVideoInfo = {
+    currentTime,
+    duration
+  };
+  setupGifTimelineRange(duration, startTime, endTime);
+}
+
+async function getGifVideoInfo() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'GET_GIF_VIDEO_INFO'
+    });
+
+    return response?.ok ? response : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function setupGifTimelineRange(duration, startTime, endTime) {
+  gifStartTimeInput.value = formatTimelineTime(startTime);
+  gifEndTimeInput.value = formatTimelineTime(endTime);
+  gifClipSecondsInput.value = formatSecondsValue(endTime - startTime);
+  updateGifTimeline();
+}
+
+function updateGifTimeline(changedField = '') {
+  const duration = gifVideoInfo.duration;
+  let startTime = parseTimelineTimeInput(gifStartTimeInput.value, gifVideoInfo.currentTime);
+  let seconds = normalizeClipSeconds(gifClipSecondsInput.value);
+  let endTime = parseTimelineTimeInput(gifEndTimeInput.value, startTime + seconds);
+
+  startTime = normalizeTimelineTime(startTime, duration);
+
+  if (changedField === 'seconds' || changedField === 'start') {
+    endTime = startTime + seconds;
+  } else {
+    endTime = normalizeTimelineTime(endTime, duration);
+    seconds = endTime - startTime;
+  }
+
+  if (seconds < MIN_GIF_SECONDS) {
+    seconds = MIN_GIF_SECONDS;
+    endTime = startTime + seconds;
+  }
+
+  if (seconds > MAX_GIF_SECONDS) {
+    seconds = MAX_GIF_SECONDS;
+    endTime = startTime + seconds;
+  }
+
+  if (endTime > duration) {
+    endTime = duration;
+    seconds = Math.max(MIN_GIF_SECONDS, endTime - startTime);
+  }
+
+  if (endTime <= startTime) {
+    startTime = Math.max(0, endTime - seconds);
+  }
+
+  gifStartTimeInput.value = formatTimelineTime(startTime);
+  gifEndTimeInput.value = formatTimelineTime(endTime);
+  gifClipSecondsInput.value = formatSecondsValue(seconds);
+  gifDurationValue.textContent = `長度 ${formatTimelineDuration(endTime - startTime)}`;
+  gifVideoDurationValue.textContent = `影片 ${formatTimelineTime(duration)}`;
+}
+
+async function syncGifTimelineToCurrentTime() {
+  const videoInfo = await getGifVideoInfo();
+
+  if (videoInfo?.duration) {
+    gifVideoInfo.duration = normalizeTimelineDuration(videoInfo.duration);
+    gifVideoInfo.currentTime = normalizeTimelineTime(videoInfo.currentTime, gifVideoInfo.duration);
+  }
+
+  const startTime = gifVideoInfo.currentTime;
+  const endTime = Math.min(startTime + 5, gifVideoInfo.duration);
+  setupGifTimelineRange(gifVideoInfo.duration, startTime, endTime);
+  showSettingsMessage('已同步到目前播放時間');
+}
+
 async function createGif() {
-  const gifDurationSeconds = normalizeGifDuration(gifDurationInput.value);
+  updateGifTimeline();
+  const startTime = parseTimelineTimeInput(gifStartTimeInput.value, 0);
+  const endTime = parseTimelineTimeInput(gifEndTimeInput.value, startTime + normalizeClipSeconds(gifClipSecondsInput.value));
+  const gifDurationSeconds = Math.max(MIN_GIF_SECONDS, endTime - startTime);
   const gifResolution = normalizeGifResolution(gifResolutionInput.value);
   const gifFps = normalizeGifFps(gifFpsInput.value);
   const progressId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const totalFrames = gifDurationSeconds * gifFps;
+  const totalFrames = Math.ceil(Number(gifDurationSeconds) * Number(gifFps));
 
   activeGifProgressId = progressId;
   createGifButton.disabled = true;
@@ -219,9 +339,10 @@ async function createGif() {
 
     const result = await chrome.runtime.sendMessage({
       type: 'CAPTURE_GIF',
-      durationSeconds: gifDurationSeconds,
+      startTime,
+      endTime,
       outputResolution: gifResolution,
-      fps: gifFps,
+      fps: Number(gifFps),
       progressId
     });
 
@@ -361,6 +482,27 @@ async function updateAnimePagesShortcut(shortcut) {
   }
 }
 
+async function updateAnimePagesGifShortcut(shortcut) {
+  try {
+    const tabs = await chrome.tabs.query({
+      url: 'https://ani.gamer.com.tw/*'
+    });
+
+    for (const tab of tabs) {
+      if (!tab.id) {
+        continue;
+      }
+
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'SET_GIF_SHORTCUT',
+        shortcut
+      }).catch(() => {});
+    }
+  } catch (error) {
+    // 舊頁面重新整理後會讀取新設定。
+  }
+}
+
 function shortcutFromKeyboardEvent(event) {
   const modifiers = [];
   const key = keyboardEventKey(event);
@@ -444,9 +586,106 @@ function normalizeGifResolution(value) {
 function normalizeGifFps(value) {
   const fps = Math.round(Number(value) || DEFAULT_SETTINGS.gifFps);
 
-  if ([5, 8, 12].includes(fps)) {
+  if ([30, 50].includes(fps)) {
     return String(fps);
   }
 
   return String(DEFAULT_SETTINGS.gifFps);
+}
+
+function normalizeTimelineDuration(value) {
+  const duration = Number(value);
+  return Number.isFinite(duration) && duration > 0 ? duration : 10;
+}
+
+function normalizeTimelineTime(value, duration) {
+  const time = Number(value);
+  return Math.min(Math.max(Number.isFinite(time) ? time : 0, 0), duration);
+}
+
+function normalizeClipSeconds(value) {
+  const seconds = Number(value);
+  return Math.min(Math.max(Number.isFinite(seconds) ? seconds : 5, MIN_GIF_SECONDS), MAX_GIF_SECONDS);
+}
+
+function formatSecondsValue(value) {
+  const rounded = roundTimelineValue(value);
+  return String(Number.isInteger(rounded) ? rounded : rounded.toFixed(1));
+}
+
+function parseTimelineTimeInput(value, fallback = 0) {
+  const text = String(value || '').trim();
+
+  if (/^\d+(\.\d+)?$/.test(text)) {
+    return Number(text);
+  }
+
+  const parts = text
+    .split(':')
+    .map((part) => Number(part));
+
+  if (parts.some((part) => !Number.isFinite(part))) {
+    return fallback;
+  }
+
+  if (parts.length === 3) {
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+
+  if (parts.length === 2) {
+    return parts[0] * 60 + parts[1];
+  }
+
+  return fallback;
+}
+
+function roundTimelineValue(value) {
+  return Math.round(value * 10) / 10;
+}
+
+function formatTimelineDuration(seconds) {
+  const rounded = Math.round(seconds * 10) / 10;
+  return `${rounded.toFixed(rounded % 1 === 0 ? 0 : 1)} 秒`;
+}
+
+function formatTimelineTime(seconds) {
+  const totalSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${padTime(hours)}:${padTime(minutes)}:${padTime(secs)}`;
+  }
+
+  return `${padTime(minutes)}:${padTime(secs)}`;
+}
+
+function padTime(value) {
+  return String(value).padStart(2, '0');
+}
+
+async function focusGifPanelIfRequested() {
+  const request = await chrome.storage.local.get({
+    openGifPanelRequestedAt: 0
+  });
+
+  if (!request.openGifPanelRequestedAt || Date.now() - request.openGifPanelRequestedAt > 15000) {
+    return;
+  }
+
+  await chrome.storage.local.remove('openGifPanelRequestedAt');
+  focusGifPanel();
+}
+
+function focusGifPanel() {
+  gifPanel.scrollIntoView({
+    block: 'start'
+  });
+  gifPanel.classList.add('is-highlighted');
+  statusText.textContent = 'GIF 製作';
+
+  window.setTimeout(() => {
+    gifPanel.classList.remove('is-highlighted');
+  }, 1400);
 }

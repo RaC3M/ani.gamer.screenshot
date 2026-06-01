@@ -350,6 +350,15 @@ h2 {
   background: #f8fafc;
 }
 
+.main-gif-panel {
+  margin-top: 14px;
+}
+
+.gif-panel.is-highlighted {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.18);
+}
+
 .panel-title strong,
 .panel-title small {
   display: block;
@@ -383,6 +392,90 @@ h2 {
   font-size: 13px;
   font-weight: 700;
   text-align: right;
+}
+
+.timeline-field {
+  display: grid;
+  gap: 6px;
+}
+
+.timeline-header,
+.timeline-values,
+.timeline-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.timeline-header span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.timeline-field small,
+.timeline-meta {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.timeline-values output {
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.time-input-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.time-input-grid label {
+  display: grid;
+  gap: 4px;
+}
+
+.time-input-grid span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.time-input-grid input {
+  min-width: 0;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.time-input-grid input:focus {
+  border-color: #0f766e;
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.14);
+  outline: 0;
+}
+
+.tiny-button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid #0f766e;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #0f766e;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tiny-button:hover {
+  background: #ecfdf5;
 }
 
 .progress-text {

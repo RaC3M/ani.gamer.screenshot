@@ -100,23 +100,22 @@
   }
 
   function buildRgb332Palette() {
-    const palette = new Uint8Array(COLOR_TABLE_SIZE * 3);
+  const palette = new Uint8Array(COLOR_TABLE_SIZE * 3);
 
-    for (let r = 0; r < 8; r += 1) {
-      for (let g = 0; g < 8; g += 1) {
-        for (let b = 0; b < 4; b += 1) {
-          const index = (r << 5) | (g << 2) | b;
-          const offset = index * 3;
-          palette[offset] = Math.round((r * 255) / 7);
-          palette[offset + 1] = Math.round((g * 255) / 7);
-          palette[offset + 2] = Math.round((b * 255) / 3);
-        }
+  for (let r = 0; r < 8; r += 1) {
+    for (let g = 0; g < 8; g += 1) {
+      for (let b = 0; b < 4; b += 1) {
+        const index = (r << 5) | (g << 2) | b;
+        const offset = index * 3;
+        palette[offset] = Math.round((r * 255) / 7);
+        palette[offset + 1] = Math.round((g * 255) / 7);
+        palette[offset + 2] = Math.round((b * 255) / 3);
       }
     }
-
-    return palette;
   }
 
+  return palette;
+}
   function writeLoopExtension(writer, loopCount) {
     writer.writeByte(0x21);
     writer.writeByte(0xff);
@@ -159,8 +158,90 @@
 
     writer.writeByte(0);
   }
-
   function quantizeToRgb332(imageData) {
+  const { width, height } = imageData;
+  const source = imageData.data;
+  const indices = new Uint8Array(width * height);
+  const buffer = new Float32Array(width * height * 3);
+  const DITHER_STRENGTH = 0.1;
+
+  for (
+    let pixelIndex = 0, sourceIndex = 0, bufferIndex = 0;
+    pixelIndex < width * height;
+    pixelIndex += 1, sourceIndex += 4, bufferIndex += 3
+  ) {
+    buffer[bufferIndex] = source[sourceIndex];
+    buffer[bufferIndex + 1] = source[sourceIndex + 1];
+    buffer[bufferIndex + 2] = source[sourceIndex + 2];
+  }
+
+  for (let y = 0; y < height; y += 1) {
+    const leftToRight = y % 2 === 0;
+    const startX = leftToRight ? 0 : width - 1;
+    const endX = leftToRight ? width : -1;
+    const stepX = leftToRight ? 1 : -1;
+
+    for (let x = startX; x !== endX; x += stepX) {
+      const pixelIndex = y * width + x;
+      const sourceIndex = pixelIndex * 4;
+      const bufferIndex = pixelIndex * 3;
+
+      if (source[sourceIndex + 3] < 128) {
+        indices[pixelIndex] = 0;
+        continue;
+      }
+
+      const oldRed = clampColor(buffer[bufferIndex]);
+      const oldGreen = clampColor(buffer[bufferIndex + 1]);
+      const oldBlue = clampColor(buffer[bufferIndex + 2]);
+
+      const redLevel = oldRed >> 5;
+      const greenLevel = oldGreen >> 5;
+      const blueLevel = oldBlue >> 6;
+
+      const newRed = Math.round((redLevel * 255) / 7);
+      const newGreen = Math.round((greenLevel * 255) / 7);
+      const newBlue = Math.round((blueLevel * 255) / 3);
+
+      indices[pixelIndex] = (redLevel << 5) | (greenLevel << 2) | blueLevel;
+
+      const errorRed = oldRed - newRed;
+      const errorGreen = oldGreen - newGreen;
+      const errorBlue = oldBlue - newBlue;
+
+      if (leftToRight) {
+        distributeQuantizeError(buffer, width, height, x + 1, y, errorRed, errorGreen, errorBlue, (7 / 16) * DITHER_STRENGTH);
+        distributeQuantizeError(buffer, width, height, x - 1, y + 1, errorRed, errorGreen, errorBlue, (3 / 16) * DITHER_STRENGTH);
+        distributeQuantizeError(buffer, width, height, x, y + 1, errorRed, errorGreen, errorBlue, (5 / 16) * DITHER_STRENGTH);
+        distributeQuantizeError(buffer, width, height, x + 1, y + 1, errorRed, errorGreen, errorBlue, (1 / 16) * DITHER_STRENGTH);
+      } else {
+        distributeQuantizeError(buffer, width, height, x - 1, y, errorRed, errorGreen, errorBlue, (7 / 16) * DITHER_STRENGTH);
+        distributeQuantizeError(buffer, width, height, x + 1, y + 1, errorRed, errorGreen, errorBlue, (3 / 16) * DITHER_STRENGTH);
+        distributeQuantizeError(buffer, width, height, x, y + 1, errorRed, errorGreen, errorBlue, (5 / 16) * DITHER_STRENGTH);
+        distributeQuantizeError(buffer, width, height, x - 1, y + 1, errorRed, errorGreen, errorBlue, (1 / 16) * DITHER_STRENGTH);
+      }
+    }
+  }
+
+  return indices;
+}
+
+function distributeQuantizeError(buffer, width, height, x, y, errorRed, errorGreen, errorBlue, factor) {
+  if (x < 0 || x >= width || y < 0 || y >= height) {
+    return;
+  }
+
+  const bufferIndex = (y * width + x) * 3;
+  buffer[bufferIndex] += errorRed * factor;
+  buffer[bufferIndex + 1] += errorGreen * factor;
+  buffer[bufferIndex + 2] += errorBlue * factor;
+}
+
+function clampColor(value) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+  
+  /*function quantizeToRgb332(imageData) {
     const source = imageData.data;
     const indices = new Uint8Array(imageData.width * imageData.height);
 
@@ -177,7 +258,7 @@
     }
 
     return indices;
-  }
+  }*/
 
   function lzwEncode(indices) {
     const clearCode = 1 << LZW_MIN_CODE_SIZE;
@@ -231,7 +312,7 @@
         dictionary.set(key, nextCode);
         nextCode += 1;
 
-        if (nextCode === (1 << codeSize) && codeSize < 12) {
+        if (nextCode > (1 << codeSize) && codeSize < 12) {
           codeSize += 1;
         }
       } else {
