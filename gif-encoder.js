@@ -163,7 +163,7 @@
   const source = imageData.data;
   const indices = new Uint8Array(width * height);
   const buffer = new Float32Array(width * height * 3);
-  const DITHER_STRENGTH = 0.1;
+  const DITHER_STRENGTH = 0.14;
 
   for (
     let pixelIndex = 0, sourceIndex = 0, bufferIndex = 0;

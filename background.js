@@ -1,4 +1,4 @@
-importScripts('gif-encoder.js');
+//importScripts('gif-encoder.js');
 
 const ANI_URL_PATTERN = /^https:\/\/ani\.gamer\.com\.tw\//;
 const DEFAULT_GIF_FPS = 30;
@@ -34,6 +34,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           ok: false,
           statusText: '截圖失敗',
           message: '截圖失敗，可能受到網站限制'
+        });
+      });
+
+    return true;
+  }
+
+  if (message?.type === 'ENCODE_GIF_OFFSCREEN' || String(message?.type || '').startsWith('ENCODE_GIF_OFFSCREEN_')) {
+    encodeGifOffscreen(message)
+      .then(sendResponse)
+      .catch((error) => {
+        sendResponse({
+          ok: false,
+          message: error?.message || 'GIF 編碼失敗'
         });
       });
 
@@ -83,7 +96,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({
           ok: false,
           statusText: 'GIF 製作失敗',
-          message: 'GIF 製作失敗，可能受到網站限制'
+          message: error?.message || 'GIF 製作失敗'
         });
       });
 
@@ -93,15 +106,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-chrome.commands.onCommand.addListener((command) => {
-  if (command !== 'capture-screenshot') {
-    return;
+async function encodeGifOffscreen(message) {
+  await ensureOffscreenDocument();
+  const type = message.type === 'ENCODE_GIF_OFFSCREEN'
+    ? 'OFFSCREEN_ENCODE_GIF'
+    : String(message.type).replace('ENCODE_GIF_OFFSCREEN', 'OFFSCREEN_ENCODE_GIF');
+
+  const response = await chrome.runtime.sendMessage({
+    type,
+    jobId: message.jobId || '',
+    width: message.width,
+    height: message.height,
+    fps: message.fps,
+    frames: message.frames,
+    frame: message.frame,
+    frameIndex: message.frameIndex,
+    frameCount: message.frameCount,
+    chunkIndex: message.chunkIndex,
+    progressId: message.progressId || ''
+  });
+
+  if (!response?.ok) {
+    throw new Error(response?.message || 'GIF 編碼失敗');
   }
 
-  captureActiveTab().catch((error) => {
-    console.error(error);
-  });
-});
+  return response;
+}
+
+async function getOffscreenGifResultDataUrl(gifCapture) {
+  const jobId = gifCapture.resultToken || '';
+  const chunkCount = Number(gifCapture.chunkCount) || 0;
+
+  if (!jobId || chunkCount <= 0) {
+    throw new Error('GIF 結果讀取失敗');
+  }
+
+  const chunks = [];
+
+  try {
+    for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      const response = await encodeGifOffscreen({
+        type: 'ENCODE_GIF_OFFSCREEN_GET_RESULT_CHUNK',
+        jobId,
+        chunkIndex
+      });
+
+      if (!response?.ok || typeof response.chunk !== 'string') {
+        throw new Error(response?.message || 'GIF 結果讀取失敗');
+      }
+
+      chunks.push(response.chunk);
+    }
+
+    return chunks.join('');
+  } finally {
+    await encodeGifOffscreen({
+      type: 'ENCODE_GIF_OFFSCREEN_CLEAR_RESULT',
+      jobId
+    }).catch(() => {});
+  }
+}
 
 async function captureActiveTab(sourceTab, options = {}) {
   const tab = sourceTab?.id ? sourceTab : await getActiveTab();
@@ -202,15 +266,16 @@ async function captureGif(sourceTab, options = {}) {
       progressId
     });
 
-    if (!gifCapture?.ok || !gifCapture.dataUrl) {
+    if (!gifCapture?.ok || (!gifCapture.dataUrl && !gifCapture.resultToken)) {
       throw new FriendlyError(gifCapture?.message || 'GIF 產生失敗');
     }
 
     const filename = buildFilename(gifCapture.title, settings, 'gif');
+    const gifDataUrl = gifCapture.dataUrl || await getOffscreenGifResultDataUrl(gifCapture);
     let downloadError = '';
 
     try {
-      await downloadWithChrome(gifCapture.dataUrl, filename);
+      await downloadWithChrome(gifDataUrl, filename);
     } catch (error) {
       downloadError = '下載失敗';
       console.warn(error);
@@ -233,11 +298,13 @@ async function captureGif(sourceTab, options = {}) {
       downloadError
     };
   } catch (error) {
+    console.error('CAPTURE_GIF failed:', error);
+
     const message = error instanceof FriendlyError
       ? error.message
-      : 'GIF 製作失敗，可能受到網站限制';
+      : error?.message || 'GIF 製作失敗，可能受到網站限制';
 
-    await showPageToast(tab.id, 'GIF 製作失敗，可能受到網站限制', 'error');
+    await showPageToast(tab.id, message, 'error');
     await saveLastStatus('GIF 製作失敗');
 
     return {
@@ -290,20 +357,22 @@ async function captureGifFromVideo(tab, options) {
       ...options
     });
 
-    if (response?.ok && response.dataUrl) {
+    if (response?.ok && (response.dataUrl || response.resultToken)) {
       return response;
     }
 
-    console.warn('GIF video capture failed:', response?.message);
+    console.warn('GIF video capture failed:', response);
+
     return {
       ok: false,
       message: response?.message || 'GIF 產生失敗'
     };
   } catch (error) {
-    console.warn('GIF video capture message failed:', error);
+    console.error('GIF video capture message failed:', error);
+
     return {
       ok: false,
-      message: 'GIF 產生失敗'
+      message: error?.message || 'GIF 產生失敗'
     };
   }
 }
@@ -627,8 +696,8 @@ async function ensureOffscreenDocument() {
 
   await chrome.offscreen.createDocument({
     url: 'offscreen.html',
-    reasons: ['CLIPBOARD'],
-    justification: '複製使用者手動截取的圖片到剪貼簿'
+    reasons: ['CLIPBOARD', 'BLOBS'],
+    justification: '複製圖片到剪貼簿並在背景產生 GIF'
   });
 }
 

@@ -51,7 +51,7 @@ GIF 功能會直接從頁面中的影片元素擷取影格。
 
 如果你只是想安裝使用，照這個方式做即可。
 
-1. 下載 `anime-screenshot-extension-1.0.0.zip`。
+1. 下載 `anime-screenshot-extension-3.0.1.zip`。
 2. 在電腦上找一個固定位置，把 ZIP 解壓縮。
 
 建議放在類似這種資料夾：
@@ -272,7 +272,7 @@ anime-screenshot-extension/
 ├─ offscreen.html
 ├─ offscreen.js
 ├─ README.md
-└─ anime-screenshot-extension-1.0.0.zip
+└─ anime-screenshot-extension-3.0.1.zip
 ```
 
 ## 常見問題

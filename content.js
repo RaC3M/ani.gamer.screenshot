@@ -276,13 +276,13 @@ async function captureGifFromVideo(options = {}) {
       message: '影片尚未載入完成'
     };
   }
-
-  if (typeof globalThis.encodeGif !== 'function') {
-    return {
-      ok: false,
-      message: 'GIF 產生器未載入'
+  /*
+  if (typeof globalThis.GIF !== 'function') {
+  return {
+    ok: false,
+    message: 'GIF.js 產生器未載入'
     };
-  }
+  }*/
 
   const fps = normalizeGifFps(options.fps);
   const startTime = normalizeTimeValue(options.startTime, video.currentTime);
@@ -383,20 +383,21 @@ async function captureGifFromVideo(options = {}) {
     }
 
     await sendGifProgress(progressId, 70, 100, '產生 GIF 中...');
-    const gifBytes = globalThis.encodeGif(frames, {
+
+    const gifResult = await encodeGifWithGifJs(frames, {
       width: outputWidth,
       height: outputHeight,
-      loop: 0
+      fps,
+      progressId
     });
-    const gifBlob = new Blob([gifBytes], {
-      type: 'image/gif'
-    });
-    const dataUrl = await blobToDataUrl(gifBlob);
+
     await sendGifProgress(progressId, 95, 100, '產生 GIF 中...');
 
     return {
       ok: true,
-      dataUrl,
+      dataUrl: gifResult.dataUrl || '',
+      resultToken: gifResult.resultToken || '',
+      chunkCount: gifResult.chunkCount || 0,
       width: outputWidth,
       height: outputHeight,
       fps,
@@ -427,7 +428,193 @@ async function captureGifFromVideo(options = {}) {
     }
   }
 }
+/*
+function encodeGifWithGifJs(frames, options = {}) {
+  return new Promise(async (resolve, reject) => {
+    if (typeof globalThis.GIF !== 'function') {
+      reject(new Error('GIF.js 未載入'));
+      return;
+    }
 
+    if (!Array.isArray(frames) || frames.length === 0) {
+      reject(new Error('沒有可用影格，無法產生 GIF'));
+      return;
+    }
+
+    const width = Number(options.width);
+    const height = Number(options.height);
+    const fps = Math.max(1, Number(options.fps) || 30);
+    const delay = Math.max(20, Math.round(1000 / fps));
+    const progressId = options.progressId || '';
+
+    const workerScript = chrome.runtime.getURL('gif.worker.js');
+
+    console.log('GIF workerScript:', workerScript);
+
+    const gif = new globalThis.GIF({
+      workers: 2,
+      workerScript,
+      quality: 10,
+      repeat: 0,
+      width,
+      height,
+      background: '#ffffff',
+      dither: 'FloydSteinberg-serpentine'
+    });
+
+    gif.on('progress', (progress) => {
+      const percent = 70 + Math.round(progress * 25);
+      sendGifProgress(progressId, percent, 100, '產生 GIF 中...').catch(() => {});
+    });
+
+    gif.on('finished', (blob) => {
+      resolve(blob);
+    });
+
+    gif.on('abort', () => {
+      reject(new Error('GIF.js 編碼已中止'));
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext('2d', {
+      willReadFrequently: true
+    });
+
+    if (!context) {
+      reject(new Error('GIF.js 建立 canvas 失敗'));
+      return;
+    }
+
+    for (const frame of frames) {
+      const imageData = frame.imageData || frame;
+
+      if (!imageData || !imageData.data) {
+        continue;
+      }
+
+      context.putImageData(imageData, 0, 0);
+
+      gif.addFrame(canvas, {
+        delay: frame.delayMilliseconds || delay,
+        copy: true
+      });
+    }
+
+    if (!gif.frames.length) {
+      reject(new Error('沒有可用影格，無法產生 GIF'));
+      return;
+    }
+
+    gif.render();
+  });
+}
+*/
+function encodeGifWithGifJs(frames, options = {}) {
+  return new Promise(async (resolve, reject) => {
+    const width = Number(options.width);
+    const height = Number(options.height);
+    const fps = Math.max(1, Number(options.fps) || 30);
+    const delay = Math.max(20, Math.round(1000 / fps));
+
+    if (!width || !height) {
+      reject(new Error('GIF 尺寸錯誤'));
+      return;
+    }
+
+    if (!Array.isArray(frames) || frames.length === 0) {
+      reject(new Error('沒有可用影格，無法製作 GIF'));
+      return;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', {
+      willReadFrequently: true
+    });
+
+    if (!context) {
+      reject(new Error('建立 GIF 影格 canvas 失敗'));
+      return;
+    }
+
+    const progressId = options.progressId || '';
+    const jobId = progressId || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    let addedFrames = 0;
+
+    try {
+      const startResponse = await chrome.runtime.sendMessage({
+        type: 'ENCODE_GIF_OFFSCREEN_START',
+        jobId,
+        width,
+        height,
+        fps,
+        progressId
+      });
+
+      if (!startResponse?.ok) {
+        throw new Error(startResponse?.message || 'GIF 編碼失敗');
+      }
+
+      for (const frame of frames) {
+        const imageData = frame.imageData || frame;
+
+        if (!imageData?.data) {
+          continue;
+        }
+
+        context.putImageData(imageData, 0, 0);
+        const addResponse = await chrome.runtime.sendMessage({
+          type: 'ENCODE_GIF_OFFSCREEN_ADD_FRAME',
+          jobId,
+          frameIndex: addedFrames,
+          frameCount: frames.length,
+          frame: {
+            dataUrl: canvas.toDataURL('image/png'),
+            delayMilliseconds: frame.delayMilliseconds || delay
+          },
+          progressId
+        });
+
+        if (!addResponse?.ok) {
+          throw new Error(addResponse?.message || 'GIF 影格傳送失敗');
+        }
+
+        addedFrames += 1;
+      }
+    } catch (error) {
+      chrome.runtime.sendMessage({
+        type: 'ENCODE_GIF_OFFSCREEN_CANCEL',
+        jobId,
+        progressId
+      }).catch(() => {});
+      reject(new Error(error?.message || 'GIF 影格轉換失敗'));
+      return;
+    }
+
+    if (!addedFrames) {
+      reject(new Error('沒有可用影格，無法製作 GIF'));
+      return;
+    }
+
+    chrome.runtime.sendMessage({
+      type: 'ENCODE_GIF_OFFSCREEN_FINISH',
+      jobId,
+      progressId
+    })
+      .then((response) => {
+        if (!response?.ok || (!response.dataUrl && !response.resultToken)) {
+          throw new Error(response?.message || 'GIF 編碼失敗');
+        }
+
+        resolve(response);
+      })
+      .catch(reject);
+  });
+}
 function findAnimeVideo() {
   const videos = Array.from(document.querySelectorAll('video'));
 
@@ -1113,12 +1300,33 @@ function pushGifFrame(options) {
     progressId
   } = options;
 
-  context.drawImage(video, 0, 0, outputWidth, outputHeight);
-  frames.push({
-    imageData: context.getImageData(0, 0, outputWidth, outputHeight),
-    delayCentiseconds: getGifFrameDelayCentiseconds(fps, frames.length)
-  });
-  sendGifProgress(progressId, Math.round((frames.length / estimatedFrames) * 50), 100, '擷取 GIF 影格中...');
+  try {
+    context.drawImage(video, 0, 0, outputWidth, outputHeight);
+
+    frames.push({
+      imageData: context.getImageData(0, 0, outputWidth, outputHeight),
+      delayCentiseconds: getGifFrameDelayCentiseconds(fps, frames.length)
+    });
+
+    sendGifProgress(
+      progressId,
+      Math.round((frames.length / estimatedFrames) * 50),
+      100,
+      '擷取 GIF 影格中...'
+    );
+  } catch (error) {
+    console.error('pushGifFrame failed:', error);
+
+    if (
+      error?.name === 'SecurityError' ||
+      String(error?.message || '').includes('tainted') ||
+      String(error?.message || '').includes('cross-origin')
+    ) {
+      throw new Error('影片畫面無法被 canvas 讀取，可能是瀏覽器或影片來源限制');
+    }
+
+    throw new Error(error?.message || 'GIF 影格擷取失敗');
+  }
 }
 
 function seekVideo(video, time) {

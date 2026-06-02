@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "動畫瘋截圖小工具",
-  "version": "1.0.0",
+  "version": "3.0.1",
   "description": "在巴哈姆特動畫瘋頁面手動截取目前可見的播放器畫面。",
   "icons": {
     "16": "icons/icon16.png",
@@ -34,17 +34,18 @@
     }
   },
   "content_scripts": [
-    {
-      "matches": [
-        "https://ani.gamer.com.tw/*"
-      ],
-      "js": [
-        "gif-encoder.js",
-        "content.js"
-      ],
-      "run_at": "document_idle"
-    }
-  ],
+  {
+    "matches": ["https://ani.gamer.com.tw/*"],
+    "js": ["content.js"],
+    "run_at": "document_idle"
+  }
+],
+"web_accessible_resources": [
+  {
+    "resources": ["gif.worker.js"],
+    "matches": ["https://ani.gamer.com.tw/*", "https://*.gamer.com.tw/*"]
+  }
+],
   "commands": {
     "capture-screenshot": {
       "description": "截取動畫瘋播放器畫面"
