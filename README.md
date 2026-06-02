@@ -39,7 +39,8 @@
 
 ## 功能展示
 
-<img src="assets/demo.gif" width="700">
+<img src="demo.gif" width="700">
+<img src="demo.png" width="700">
 
 ## 重要說明
 
